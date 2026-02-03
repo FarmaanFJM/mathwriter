@@ -1,4 +1,5 @@
 import { ipcRenderer, contextBridge } from 'electron'
+import type { Note, NoteIndex } from '../../src/types'
 
 // --------- Expose some API to the Renderer process ---------
 contextBridge.exposeInMainWorld('ipcRenderer', {
@@ -21,6 +22,19 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
 
   // You can expose other APTs you need here.
   // ...
+})
+
+// --------- MathWriter Note Storage API ---------
+contextBridge.exposeInMainWorld('electronAPI', {
+  // Note operations
+  loadNotes: (): Promise<NoteIndex> => ipcRenderer.invoke('load-notes'),
+  loadNote: (id: string): Promise<Note | null> => ipcRenderer.invoke('load-note', id),
+  saveNote: (note: Note): Promise<void> => ipcRenderer.invoke('save-note', note),
+  deleteNote: (id: string): Promise<void> => ipcRenderer.invoke('delete-note', id),
+  createNote: (title: string): Promise<Note> => ipcRenderer.invoke('create-note', title),
+  
+  // App info
+  getAppPath: (): Promise<string> => ipcRenderer.invoke('get-app-path'),
 })
 
 // --------- Preload scripts loading ---------
