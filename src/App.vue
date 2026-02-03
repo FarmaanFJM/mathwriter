@@ -1,168 +1,134 @@
 <template>
-  <div class="app-container">
-    <!-- Header -->
+  <div class="app">
     <header class="app-header">
       <div class="header-left">
         <h1 class="app-title">MathWriter</h1>
+        <span class="app-subtitle">Keyboard-Driven Math Editor</span>
       </div>
       <div class="header-right">
-        <button class="icon-btn" @click="toggleTheme" title="Toggle theme">
-          <span v-if="editorStore.theme === 'light'">🌙</span>
-          <span v-else>☀️</span>
+        <button class="theme-toggle" @click="editorStore.toggleTheme()" :title="editorStore.theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'">
+          {{ editorStore.theme === 'light' ? '🌙' : '☀️' }}
         </button>
       </div>
     </header>
 
-    <!-- Main content area with three panes -->
-    <div class="app-main">
-      <!-- Left pane: Note list -->
-      <aside class="notes-sidebar">
-        <NotesList />
-      </aside>
+    <main class="app-main">
+      <MathEditor />
+    </main>
 
-      <!-- Center pane: Editor -->
-      <main class="editor-pane">
-        <Editor />
-      </main>
-
-      <!-- Right pane: Math tools -->
-      <aside class="math-tools-sidebar">
-        <MathTools />
-      </aside>
-    </div>
+    <footer class="app-footer">
+      <span class="footer-hint">Press <kbd>/</kbd> to open command palette</span>
+      <span class="footer-hint">Type <kbd>/matrix</kbd> or <kbd>/alpha</kbd> to insert</span>
+    </footer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import { useNotesStore } from './stores/notesStore';
 import { useEditorStore } from './stores/editorStore';
-import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts';
-import NotesList from './components/NotesList.vue';
-import Editor from './components/Editor.vue';
-import MathTools from './components/MathTools.vue';
+import MathEditor from './components/MathEditor.vue';
 
-const notesStore = useNotesStore();
 const editorStore = useEditorStore();
 
-// Initialize keyboard shortcuts
-useKeyboardShortcuts();
-
-onMounted(async () => {
+onMounted(() => {
   // Initialize theme
   editorStore.initTheme();
-  
-  // Load notes from storage
-  await notesStore.loadNotes();
-  
-  // Load the first note if available
-  if (notesStore.notes.length > 0) {
-    await notesStore.loadNote(notesStore.notes[0].id);
-  }
 });
-
-function toggleTheme() {
-  editorStore.toggleTheme();
-  // Persist theme
-  localStorage.setItem('mathwriter-theme', editorStore.theme);
-}
 </script>
 
 <style scoped>
-.app-container {
+.app {
+  width: 100vw;
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
+  background: var(--color-bg-primary);
 }
 
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-md) var(--spacing-lg);
-  background: var(--color-bg-secondary);
+  padding: var(--spacing-md) var(--spacing-xl);
   border-bottom: 1px solid var(--color-border);
-  height: 56px;
-  flex-shrink: 0;
+  background: var(--color-bg-secondary);
 }
 
 .header-left {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--spacing-md);
 }
 
 .app-title {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-size: var(--font-size-xl);
+  font-weight: 700;
   color: var(--color-text-primary);
+  margin: 0;
+}
+
+.app-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  font-weight: 400;
 }
 
 .header-right {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-md);
 }
 
-.icon-btn {
-  width: 36px;
-  height: 36px;
+.theme-toggle {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+  cursor: pointer;
+  font-size: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-md);
-  background: transparent;
-  font-size: 18px;
-  transition: background var(--transition-fast);
+  transition: all var(--transition-fast);
 }
 
-.icon-btn:hover {
-  background: var(--color-bg-hover);
+.theme-toggle:hover {
+  background: var(--color-accent-light);
+  border-color: var(--color-accent);
+  transform: scale(1.05);
 }
 
 .app-main {
-  display: flex;
   flex: 1;
   overflow: hidden;
+  padding: var(--spacing-xl);
 }
 
-.notes-sidebar {
-  width: 280px;
-  flex-shrink: 0;
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-xl);
+  padding: var(--spacing-sm) var(--spacing-xl);
+  border-top: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
-  border-right: 1px solid var(--color-border);
-  overflow-y: auto;
 }
 
-.editor-pane {
-  flex: 1;
-  overflow-y: auto;
+.footer-hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
   background: var(--color-bg-primary);
-}
-
-.math-tools-sidebar {
-  width: 320px;
-  flex-shrink: 0;
-  background: var(--color-bg-secondary);
-  border-left: 1px solid var(--color-border);
-  overflow-y: auto;
-}
-
-/* Responsive adjustments */
-@media (max-width: 1200px) {
-  .math-tools-sidebar {
-    width: 280px;
-  }
-}
-
-@media (max-width: 900px) {
-  .notes-sidebar {
-    width: 240px;
-  }
-  
-  .math-tools-sidebar {
-    width: 240px;
-  }
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 </style>

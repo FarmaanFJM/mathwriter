@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
-import * as noteStorage from './noteStorage'
+
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -79,11 +79,7 @@ async function createWindow() {
   // win.webContents.on('will-navigate', (event, url) => { }) #344
 }
 
-app.whenReady().then(async () => {
-  // Initialize seed notes on first launch
-  await noteStorage.initializeSeedNotes()
-  createWindow()
-})
+app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
   win = null
@@ -124,27 +120,4 @@ ipcMain.handle('open-win', (_, arg) => {
   }
 })
 
-// --------- MathWriter Note Storage IPC Handlers ---------
-ipcMain.handle('load-notes', async () => {
-  return await noteStorage.loadNotesIndex()
-})
 
-ipcMain.handle('load-note', async (_, id: string) => {
-  return await noteStorage.loadNote(id)
-})
-
-ipcMain.handle('save-note', async (_, note) => {
-  await noteStorage.saveNote(note)
-})
-
-ipcMain.handle('delete-note', async (_, id: string) => {
-  await noteStorage.deleteNote(id)
-})
-
-ipcMain.handle('create-note', async (_, title: string) => {
-  return await noteStorage.createNote(title)
-})
-
-ipcMain.handle('get-app-path', async () => {
-  return noteStorage.getNotesDir()
-})
