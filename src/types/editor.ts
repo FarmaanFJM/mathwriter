@@ -1,48 +1,64 @@
-// Core editor types for keyboard-driven math text editor
+// Strict block-based editor types
 
-export type Element = 
-  | TextElement
-  | MatrixElement
-  | SymbolElement
+// Line element base
+export interface LineElement {
+  id: string
+  type: 'text' | 'matrix'
+}
 
-export interface TextElement {
+// Text line with inline segments
+export interface TextLine extends LineElement {
+  type: 'text'
+  content: (TextSpan | SymbolSpan)[]
+}
+
+export interface TextSpan {
   type: 'text'
   value: string
 }
 
-export interface MatrixElement {
+export interface SymbolSpan {
+  type: 'symbol'
+  value: 'sigma' | 'integral' | 'sqrt' | 'pi' | 'theta' | 'alpha' | 'beta' | 'gamma' | 'delta' | 'lambda'
+  display: string
+}
+
+// Matrix line
+export interface MatrixLine extends LineElement {
   type: 'matrix'
-  data: string[][]  // 2D array of cell contents
   rows: number
   cols: number
+  data: string[][]  // 2D array of cell values
 }
 
-export interface SymbolElement {
-  type: 'symbol'
-  value: 'sigma' | 'integral' | 'sqrt' | 'pi' | 'alpha' | 'beta' | 'gamma' | 'delta' | 'theta' | 'lambda'
-  display?: string  // Optional display override
+// Document is array of lines
+export type DocumentContent = (TextLine | MatrixLine)[]
+
+// Cursor position (zone-based)
+export type CursorPosition = 
+  | { zone: 'text', lineId: string, charOffset: number }
+  | { zone: 'matrix', lineId: string, row: number, col: number }
+
+// Note structure
+export interface Note {
+  id: string
+  title: string
+  content: DocumentContent
+  createdAt: number
+  updatedAt: number
 }
 
-export interface CursorPosition {
-  type: 'text' | 'matrix'
-  elementIndex: number
-  textOffset?: number  // For text elements (character position)
-  row?: number         // For matrix elements
-  col?: number         // For matrix elements
-}
-
-export interface EditorState {
-  content: Element[]
-  cursorPosition: CursorPosition
-  showCommandPalette: boolean
-  commandSearchQuery: string
-  selectedCommandIndex: number
-}
-
+// Command definition
 export interface Command {
   id: string
   name: string
   description: string
   category: 'insert' | 'symbol' | 'special'
-  execute: (state: EditorState) => void
+}
+
+// Symbol definition for keypad
+export interface MathSymbol {
+  id: SymbolSpan['value']
+  name: string
+  display: string
 }
