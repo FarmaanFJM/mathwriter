@@ -4,7 +4,13 @@
     <div class="sidebar-left">
       <div class="sidebar-header">
         <h3>Notes</h3>
-        <button class="btn-new-note" @click="createNewNote" title="New Note">+</button>
+        <div class="header-actions">
+          <button class="btn-theme-toggle" @click="toggleTheme" :title="`Switch to ${editorStore.theme === 'light' ? 'dark' : 'light'} mode`">
+            <span v-if="editorStore.theme === 'light'">🌙</span>
+            <span v-else>☀️</span>
+          </button>
+          <button class="btn-new-note" @click="createNewNote" title="New Note">+</button>
+        </div>
       </div>
       <div class="notes-list">
         <div
@@ -101,6 +107,8 @@
                 :class="{ 
                   'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.row === cell.row && cursor.col === cell.col
                 }"
+                :data-row="cell.row"
+                :data-col="cell.col"
                 @click.stop="focusMatrixCell(line.id, cell.row, cell.col)"
               >
                 {{ cell.value || '_' }}
@@ -199,9 +207,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick } from 'vue';
 import { useNotesStore } from '../stores/notesStore';
+import { useEditorStore } from '../stores/editorStore';
 import type { CursorPosition, TextLine, MatrixLine, Command, MathSymbol, SymbolSpan } from '../types/editor';
 
 const notesStore = useNotesStore();
+const editorStore = useEditorStore();
 const hiddenInput = ref<HTMLInputElement | null>(null);
 const paletteInputRef = ref<HTMLInputElement | null>(null);
 
@@ -221,6 +231,7 @@ const selectedCommandIndex = ref(0);
 
 // Initialize
 onMounted(() => {
+  editorStore.initTheme();
   notesStore.init();
   if (document.value.length > 0) {
     cursor.value = {
@@ -563,19 +574,62 @@ function deleteCharAtCursor() {
     const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine;
     if (!currentLine) return;
 
+    // Try to delete last character from last text segment
     const lastSegment = currentLine.content[currentLine.content.length - 1];
+    
     if (lastSegment?.type === 'text' && lastSegment.value.length > 0) {
+      // Delete character from text
       lastSegment.value = lastSegment.value.slice(0, -1);
       cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
+      updateDocument();
+    } else if (lastSegment?.type === 'symbol') {
+      // Delete last symbol
+      currentLine.content.pop();
+      cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
+      updateDocument();
+    } else if (currentLine.content.length === 1 && 
+               currentLine.content[0].type === 'text' && 
+               currentLine.content[0].value === '' &&
+               notesStore.activeNote &&
+               notesStore.activeNote.content.length > 1) {
+      // Delete empty line (only if not the only line in document)
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+      notesStore.activeNote.content.splice(lineIndex, 1);
+      
+      // Move cursor to previous line
+      if (lineIndex > 0) {
+        const prevLine = document.value[lineIndex - 1];
+        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+      } else if (document.value.length > 0) {
+        cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 };
+      }
       updateDocument();
     }
   } else if (cursor.value.zone === 'matrix') {
     const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
     if (!line) return;
 
-    // Clear cell value
-    line.data[cursor.value.row][cursor.value.col] = '';
-    updateDocument();
+    // Check if matrix is empty
+    const isEmpty = line.data.every(row => row.every(cell => cell === ''));
+    
+    if (isEmpty && notesStore.activeNote && notesStore.activeNote.content.length > 1) {
+      // Delete entire empty matrix
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+      notesStore.activeNote.content.splice(lineIndex, 1);
+      
+      // Move cursor to previous line
+      if (lineIndex > 0) {
+        const prevLine = document.value[lineIndex - 1];
+        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+      } else if (document.value.length > 0) {
+        cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 };
+      }
+      updateDocument();
+    } else {
+      // Just clear current cell
+      line.data[cursor.value.row][cursor.value.col] = '';
+      updateDocument();
+    }
   }
 }
 
@@ -649,6 +703,39 @@ function focusMatrixCell(lineId: string, row: number, col: number) {
 }
 
 function handleDisplayClick(event: MouseEvent) {
+  const target = event.target as HTMLElement;
+  
+  // Click on matrix cell
+  if (target.classList.contains('matrix-cell-textbook')) {
+    const cellEl = target;
+    const lineEl = cellEl.closest('[data-line-id]');
+    if (lineEl) {
+      const lineId = lineEl.getAttribute('data-line-id');
+      const row = parseInt(cellEl.getAttribute('data-row') || '0');
+      const col = parseInt(cellEl.getAttribute('data-col') || '0');
+      if (lineId) {
+        focusMatrixCell(lineId, row, col);
+      }
+    }
+    return;
+  }
+
+  // Click on text line - set cursor to beginning of line
+  const lineEl = target.closest('.container-line');
+  if (lineEl) {
+    const lineId = lineEl.getAttribute('data-line-id');
+    if (lineId) {
+      cursor.value = {
+        zone: 'text',
+        lineId: lineId,
+        charOffset: 0
+      };
+      hiddenInput.value?.focus();
+    }
+    return;
+  }
+
+  // Fallback: just focus hidden input
   hiddenInput.value?.focus();
 }
 
@@ -694,6 +781,10 @@ function closeCommandPalette() {
 // Helper functions
 function createNewNote() {
   notesStore.createNote();
+}
+
+function toggleTheme() {
+  editorStore.toggleTheme();
 }
 
 function updateNoteTitle() {
@@ -756,6 +847,32 @@ function generateId(): string {
 .sidebar-header h3 {
   margin: 0;
   font-size: var(--font-size-lg);
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.btn-theme-toggle {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.btn-theme-toggle:hover {
+  background: var(--color-accent-light);
+  border-color: var(--color-accent);
 }
 
 .btn-new-note {
@@ -874,7 +991,7 @@ function generateId(): string {
 
 .symbol {
   display: inline;
-  color: var(--color-accent);
+  color: var(--color-text-primary);
   font-weight: 600;
   font-size: 20px;
   margin: 0 3px;
