@@ -115,29 +115,29 @@ function handleEditorKeydown(event: KeyboardEvent) {
 .math-expression {
   display: inline-block;
   min-width: 40px;
-  padding: 4px 8px;
-  margin: 2px 4px;
+  padding: 0;
+  margin: 0;
   cursor: pointer;
   user-select: none;
-  border-radius: 4px;
+  border-radius: 0;
   transition: all 0.15s;
   font-family: 'Cambria Math', 'TeX Gyre Termes', serif;
 }
 
 .math-expression:hover {
-  background: rgba(33, 150, 243, 0.05);
+  background: transparent;
 }
 
 .math-expression.is-active {
-  background: rgba(33, 150, 243, 0.12);
-  border: 1px solid rgba(33, 150, 243, 0.3);
-  border-radius: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 
 .math-expression.is-editing {
-  background: white;
-  border: 2px solid #2196f3;
-  padding: 3px 7px;
+  background: transparent;
+  border: none;
+  padding: 0;
 }
 
 .math-expression.display-mode {
@@ -184,8 +184,8 @@ function handleEditorKeydown(event: KeyboardEvent) {
 }
 
 [data-theme='dark'] .math-expression.is-editing {
-  background: #2c2e33;
-  border-color: #4dabf7;
+  background: transparent;
+  border-color: transparent;
 }
 
 [data-theme='dark'] .latex-hint {
