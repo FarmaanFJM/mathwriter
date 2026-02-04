@@ -3,7 +3,7 @@
 // Line element base
 export interface LineElement {
   id: string
-  type: 'text' | 'matrix'
+  type: 'text' | 'matrix' | 'math'
 }
 
 // Text line with inline segments
@@ -19,8 +19,9 @@ export interface TextSpan {
 
 export interface SymbolSpan {
   type: 'symbol'
-  value: 'sigma' | 'integral' | 'sqrt' | 'pi' | 'theta' | 'alpha' | 'beta' | 'gamma' | 'delta' | 'lambda'
+  value: 'sigma' | 'integral' | 'sqrt' | 'pi' | 'theta' | 'alpha' | 'beta' | 'gamma' | 'delta' | 'lambda' | 'plus' | 'minus' | 'times' | 'divide' | 'equals' | 'approx' | 'leq' | 'geq' | 'sum' | 'infinity'
   display: string
+  latex?: string
 }
 
 // Matrix line
@@ -31,11 +32,18 @@ export interface MatrixLine extends LineElement {
   data: string[][]  // 2D array of cell values
 }
 
+// Math expression line (KaTeX rendered)
+export interface MathExpressionLine extends LineElement {
+  type: 'math'
+  latex: string
+  displayMode: boolean
+}
+
 // Document is array of lines
-export type DocumentContent = (TextLine | MatrixLine)[]
+export type DocumentContent = (TextLine | MatrixLine | MathExpressionLine)[]
 
 // Cursor position (zone-based)
-export type CursorPosition = 
+export type CursorPosition =
   | { zone: 'text', lineId: string, charOffset: number }
   | { zone: 'matrix', lineId: string, row: number, col: number }
 
@@ -53,7 +61,7 @@ export interface Command {
   id: string
   name: string
   description: string
-  category: 'insert' | 'symbol' | 'special'
+  category: 'insert' | 'symbol' | 'operator' | 'math' | 'matrix'
   icon?: string
 }
 

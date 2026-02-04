@@ -6,8 +6,8 @@
         <h3>Notes</h3>
         <div class="header-actions">
           <button class="btn-theme-toggle" @click="toggleTheme" :title="`Switch to ${editorStore.theme === 'light' ? 'dark' : 'light'} mode`">
-            <span v-if="editorStore.theme === 'light'">🌙</span>
-            <span v-else>☀️</span>
+            <span v-if="editorStore.theme === 'light'">&#x1F319;</span>
+            <span v-else>&#x2600;&#xFE0F;</span>
           </button>
           <button class="btn-new-note" @click="createNewNote" title="New Note">+</button>
         </div>
@@ -51,60 +51,83 @@
       />
 
       <!-- DISPLAY LAYER: Read-only rendered content -->
-      <div 
+      <div
         class="editor-display"
         @click="handleDisplayClick"
         @mousemove="handleMouseMove"
       >
         <!-- Render document as pure HTML -->
-        <div 
+        <div
           v-for="(line, lineIndex) in document"
           :key="line.id"
           class="container-line"
-          :class="{ 'is-active': cursor.lineId === line.id }"
+          :class="{
+            'is-active': cursor.lineId === line.id,
+            'is-math-line': line.type === 'math'
+          }"
           :data-line-id="line.id"
           :data-line-index="lineIndex"
           :data-line-number="lineIndex + 1"
         >
           <!-- Text line -->
           <template v-if="line.type === 'text'">
-            <span 
-              v-for="(segment, idx) in line.content"
-              :key="`${line.id}-${idx}`"
-              class="text-segment"
-            >
-              <template v-if="segment.type === 'text'">{{ segment.value }}</template>
-              <span v-else class="symbol">{{ segment.display }}</span>
-            </span>
-            
+            <template v-if="(line as TextLine).content.length === 0 || ((line as TextLine).content.length === 1 && (line as TextLine).content[0].type === 'text' && (line as TextLine).content[0].value === '')">
+              <!-- Empty line with placeholder for click target -->
+              <span class="empty-line-placeholder"></span>
+            </template>
+            <template v-else>
+              <span
+                v-for="(segment, idx) in (line as TextLine).content"
+                :key="`${line.id}-${idx}`"
+                class="text-segment"
+              >
+                <template v-if="segment.type === 'text'">{{ segment.value }}</template>
+                <span v-else class="symbol">{{ segment.display }}</span>
+              </span>
+            </template>
+
             <!-- Custom caret in text -->
-            <span 
+            <span
               v-if="cursor.zone === 'text' && cursor.lineId === line.id"
               class="custom-caret"
             ></span>
           </template>
 
+          <!-- Math expression line (KaTeX rendered) -->
+          <template v-else-if="line.type === 'math'">
+            <MathExpression
+              :line="(line as MathExpressionLine)"
+              :is-active="cursor.lineId === line.id"
+              @focus="focusMathExpression(line.id)"
+              @update="updateMathLatex(line.id, $event)"
+              @blur="blurMathExpression"
+              @delete="deleteMathExpression(line.id)"
+              @navigate-up="handleArrowUp"
+              @navigate-down="handleArrowDown"
+            />
+          </template>
+
           <!-- Matrix line (inline, not a separate container) -->
-          <div 
+          <div
             v-else-if="line.type === 'matrix'"
             class="matrix-inline"
             :class="{ 'is-editing': cursor.zone === 'matrix' && cursor.lineId === line.id }"
             @click.stop="focusMatrixCell(line.id, 0, 0)"
           >
             <!-- Left bracket -->
-            <div class="matrix-bracket bracket-left" :style="{ height: bracketHeight(line) }">
+            <div class="matrix-bracket bracket-left" :style="{ height: bracketHeight(line as MatrixLine) }">
               <svg viewBox="0 0 20 100" preserveAspectRatio="none">
                 <path d="M 15 0 L 5 0 L 5 100 L 15 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
               </svg>
             </div>
 
             <!-- Grid -->
-            <div class="matrix-grid" :style="gridStyle(line)">
+            <div class="matrix-grid" :style="gridStyle(line as MatrixLine)">
               <div
-                v-for="(cell, cellIdx) in flattenMatrix(line)"
+                v-for="(cell, cellIdx) in flattenMatrix(line as MatrixLine)"
                 :key="`${line.id}-${cellIdx}`"
                 class="matrix-cell-textbook"
-                :class="{ 
+                :class="{
                   'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.row === cell.row && cursor.col === cell.col
                 }"
                 :data-row="cell.row"
@@ -116,7 +139,7 @@
             </div>
 
             <!-- Right bracket -->
-            <div class="matrix-bracket bracket-right" :style="{ height: bracketHeight(line) }">
+            <div class="matrix-bracket bracket-right" :style="{ height: bracketHeight(line as MatrixLine) }">
               <svg viewBox="0 0 20 100" preserveAspectRatio="none">
                 <path d="M 5 0 L 15 0 L 15 100 L 5 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
               </svg>
@@ -126,7 +149,7 @@
       </div>
 
       <!-- Command palette inline -->
-      <div 
+      <div
         v-if="showCommandPalette"
         class="command-palette"
         :style="palettePosition"
@@ -137,56 +160,88 @@
             v-model="commandQuery"
             type="text"
             class="palette-input"
-            placeholder="matrix, sigma, sqrt..."
+            placeholder="matrix, sigma, fraction, sqrt..."
             @keydown="handlePaletteKeydown"
             @click.stop
             ref="paletteInputRef"
           />
         </div>
         <div class="palette-list">
-          <div
-            v-for="(cmd, idx) in filteredCommands"
-            :key="cmd.id"
-            class="palette-item"
-            :class="{ selected: idx === selectedCommandIndex }"
-            @click="executeCommand(cmd)"
-          >
-            <span class="cmd-icon">{{ cmd.icon }}</span>
-            <div class="cmd-info">
-              <span class="cmd-name">{{ cmd.name }}</span>
-              <span class="cmd-desc">{{ cmd.description }}</span>
-            </div>
+          <div class="palette-category" v-if="filteredCommandsByCategory.length > 0">
+            <template v-for="group in filteredCommandsByCategory" :key="group.category">
+              <div class="palette-category-label">{{ group.label }}</div>
+              <div
+                v-for="cmd in group.commands"
+                :key="cmd.id"
+                class="palette-item"
+                :class="{ selected: cmd.id === selectedCommandId }"
+                @click="executeCommand(cmd)"
+                @mouseenter="selectedCommandId = cmd.id"
+              >
+                <span class="cmd-icon">{{ cmd.icon }}</span>
+                <div class="cmd-info">
+                  <span class="cmd-name">{{ cmd.name }}</span>
+                  <span class="cmd-desc">{{ cmd.description }}</span>
+                </div>
+              </div>
+            </template>
           </div>
+          <div v-else class="palette-empty">No matching commands</div>
         </div>
       </div>
     </div>
 
-    <!-- RIGHT SIDEBAR: Keypad -->
+    <!-- RIGHT SIDEBAR: Enhanced Keypad -->
     <div class="sidebar-right">
       <div class="keypad">
         <div class="keypad-section">
-          <h4>Math Symbols</h4>
+          <h4>Greek Letters</h4>
           <div class="keypad-grid">
-            <button
-              v-for="symbol in mathSymbols"
-              :key="symbol.id"
-              class="keypad-btn"
-              @click="insertSymbol(symbol.id)"
-              :title="symbol.name"
-            >
-              {{ symbol.display }}
-            </button>
+            <button class="keypad-btn" @click="insertMathSymbol('alpha')" title="alpha">&alpha;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('beta')" title="beta">&beta;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('gamma')" title="gamma">&gamma;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('delta')" title="delta">&delta;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('theta')" title="theta">&theta;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('lambda')" title="lambda">&lambda;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('sigma')" title="sigma">&Sigma;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('pi')" title="pi">&pi;</button>
+          </div>
+        </div>
+
+        <div class="keypad-section">
+          <h4>Operators</h4>
+          <div class="keypad-grid">
+            <button class="keypad-btn" @click="insertMathSymbol('plus')" title="plus">+</button>
+            <button class="keypad-btn" @click="insertMathSymbol('minus')" title="minus">&minus;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('times')" title="times">&times;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('divide')" title="divide">&divide;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('equals')" title="equals">=</button>
+            <button class="keypad-btn" @click="insertMathSymbol('approx')" title="approximately">&asymp;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('leq')" title="less than or equal">&le;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('geq')" title="greater than or equal">&ge;</button>
+          </div>
+        </div>
+
+        <div class="keypad-section">
+          <h4>Math Functions</h4>
+          <div class="keypad-grid">
+            <button class="keypad-btn" @click="insertMathSymbol('sqrt')" title="square root">&radic;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('integral')" title="integral">&int;</button>
+            <button class="keypad-btn" @click="insertMathSymbol('sum')" title="summation">&sum;</button>
+            <button class="keypad-btn keypad-btn-text" @click="insertMathSymbol('fraction')" title="fraction">a/b</button>
+            <button class="keypad-btn keypad-btn-text" @click="insertMathSymbol('power')" title="power">x^n</button>
+            <button class="keypad-btn keypad-btn-text" @click="insertMathSymbol('subscript')" title="subscript">x_n</button>
           </div>
         </div>
 
         <div class="keypad-section">
           <h4>Matrices</h4>
           <div class="keypad-grid">
-            <button class="keypad-btn" @click="insertMatrix(2, 2)">2×2</button>
-            <button class="keypad-btn" @click="insertMatrix(2, 3)">2×3</button>
-            <button class="keypad-btn" @click="insertMatrix(3, 2)">3×2</button>
-            <button class="keypad-btn" @click="insertMatrix(3, 3)">3×3</button>
-            <button class="keypad-btn" @click="insertMatrix(4, 4)">4×4</button>
+            <button class="keypad-btn keypad-btn-text" @click="insertMatrix(2, 2)">2&times;2</button>
+            <button class="keypad-btn keypad-btn-text" @click="insertMatrix(2, 3)">2&times;3</button>
+            <button class="keypad-btn keypad-btn-text" @click="insertMatrix(3, 2)">3&times;2</button>
+            <button class="keypad-btn keypad-btn-text" @click="insertMatrix(3, 3)">3&times;3</button>
+            <button class="keypad-btn keypad-btn-text" @click="insertMatrix(4, 4)">4&times;4</button>
           </div>
         </div>
 
@@ -194,7 +249,7 @@
           <h4>Keyboard Shortcuts</h4>
           <div class="shortcuts-list">
             <div class="shortcut-item"><kbd>/</kbd> <span>Commands</span></div>
-            <div class="shortcut-item"><kbd>↑↓←→</kbd> <span>Navigate</span></div>
+            <div class="shortcut-item"><kbd>&#x2191;&#x2193;&#x2190;&#x2192;</kbd> <span>Navigate</span></div>
             <div class="shortcut-item"><kbd>Esc</kbd> <span>Exit matrix</span></div>
             <div class="shortcut-item"><kbd>Enter</kbd> <span>New line</span></div>
           </div>
@@ -205,10 +260,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, nextTick } from 'vue';
+import { ref, computed, onMounted, nextTick } from 'vue';
 import { useNotesStore } from '../stores/notesStore';
 import { useEditorStore } from '../stores/editorStore';
-import type { CursorPosition, TextLine, MatrixLine, Command, MathSymbol, SymbolSpan } from '../types/editor';
+import MathExpression from './MathExpression.vue';
+import { createMathExpression, isDisplayModeSymbol } from '../utils/latexMapping';
+import type { CursorPosition, TextLine, MatrixLine, MathExpressionLine, Command, SymbolSpan } from '../types/editor';
 
 const notesStore = useNotesStore();
 const editorStore = useEditorStore();
@@ -227,7 +284,7 @@ const cursor = ref<CursorPosition>({
 // UI state
 const commandQuery = ref('');
 const showCommandPalette = ref(false);
-const selectedCommandIndex = ref(0);
+const selectedCommandId = ref('');
 
 // Initialize
 onMounted(() => {
@@ -245,23 +302,46 @@ onMounted(() => {
   });
 });
 
-// Commands
+// ─── Commands ──────────────────────────────────────────────
 const commands: Command[] = [
-  { id: 'matrix-2x2', name: 'matrix 2×2', description: 'Insert 2×2 matrix', category: 'insert', icon: '⊞' },
-  { id: 'matrix-2x3', name: 'matrix 2×3', description: 'Insert 2×3 matrix', category: 'insert', icon: '⊞' },
-  { id: 'matrix-3x2', name: 'matrix 3×2', description: 'Insert 3×2 matrix', category: 'insert', icon: '⊞' },
-  { id: 'matrix-3x3', name: 'matrix 3×3', description: 'Insert 3×3 matrix', category: 'insert', icon: '⊞' },
-  { id: 'matrix-4x4', name: 'matrix 4×4', description: 'Insert 4×4 matrix', category: 'insert', icon: '⊞' },
-  { id: 'sigma', name: 'sigma', description: 'Insert Σ symbol', category: 'symbol', icon: 'Σ' },
-  { id: 'integral', name: 'integral', description: 'Insert ∫ symbol', category: 'symbol', icon: '∫' },
-  { id: 'sqrt', name: 'sqrt', description: 'Insert √ symbol', category: 'symbol', icon: '√' },
-  { id: 'pi', name: 'pi', description: 'Insert π symbol', category: 'symbol', icon: 'π' },
-  { id: 'theta', name: 'theta', description: 'Insert θ symbol', category: 'symbol', icon: 'θ' },
-  { id: 'alpha', name: 'alpha', description: 'Insert α symbol', category: 'symbol', icon: 'α' },
-  { id: 'beta', name: 'beta', description: 'Insert β symbol', category: 'symbol', icon: 'β' },
-  { id: 'gamma', name: 'gamma', description: 'Insert γ symbol', category: 'symbol', icon: 'γ' },
-  { id: 'delta', name: 'delta', description: 'Insert δ symbol', category: 'symbol', icon: 'δ' },
-  { id: 'lambda', name: 'lambda', description: 'Insert λ symbol', category: 'symbol', icon: 'λ' },
+  // Greek letters
+  { id: 'sigma', name: 'sigma', description: '\u03A3 uppercase sigma', category: 'symbol', icon: '\u03A3' },
+  { id: 'sum', name: 'sum / summation', description: '\u2211 summation', category: 'symbol', icon: '\u2211' },
+  { id: 'integral', name: 'integral', description: '\u222B integral', category: 'symbol', icon: '\u222B' },
+  { id: 'pi', name: 'pi', description: '\u03C0 pi', category: 'symbol', icon: '\u03C0' },
+  { id: 'alpha', name: 'alpha', description: '\u03B1 alpha', category: 'symbol', icon: '\u03B1' },
+  { id: 'beta', name: 'beta', description: '\u03B2 beta', category: 'symbol', icon: '\u03B2' },
+  { id: 'gamma', name: 'gamma', description: '\u03B3 gamma', category: 'symbol', icon: '\u03B3' },
+  { id: 'delta', name: 'delta', description: '\u03B4 delta', category: 'symbol', icon: '\u03B4' },
+  { id: 'theta', name: 'theta', description: '\u03B8 theta', category: 'symbol', icon: '\u03B8' },
+  { id: 'lambda', name: 'lambda', description: '\u03BB lambda', category: 'symbol', icon: '\u03BB' },
+
+  // Operators
+  { id: 'plus', name: 'plus', description: '+ addition', category: 'operator', icon: '+' },
+  { id: 'minus', name: 'minus', description: '\u2212 subtraction', category: 'operator', icon: '\u2212' },
+  { id: 'times', name: 'times', description: '\u00D7 multiplication', category: 'operator', icon: '\u00D7' },
+  { id: 'divide', name: 'divide', description: '\u00F7 division', category: 'operator', icon: '\u00F7' },
+  { id: 'equals', name: 'equals', description: '= equals', category: 'operator', icon: '=' },
+  { id: 'approx', name: 'approx', description: '\u2248 approximately equal', category: 'operator', icon: '\u2248' },
+  { id: 'leq', name: 'less-equal', description: '\u2264 less than or equal', category: 'operator', icon: '\u2264' },
+  { id: 'geq', name: 'greater-equal', description: '\u2265 greater than or equal', category: 'operator', icon: '\u2265' },
+  { id: 'infinity', name: 'infinity', description: '\u221E infinity', category: 'operator', icon: '\u221E' },
+
+  // Math structures
+  { id: 'fraction', name: 'fraction', description: 'a/b fraction', category: 'math', icon: '\u2044' },
+  { id: 'sqrt', name: 'sqrt / square root', description: '\u221A square root', category: 'math', icon: '\u221A' },
+  { id: 'power', name: 'power / exponent', description: 'x^n exponent', category: 'math', icon: '^' },
+  { id: 'subscript', name: 'subscript', description: 'x_n subscript', category: 'math', icon: '_' },
+  { id: 'sum-full', name: 'summation (full)', description: '\u2211 with bounds i=1 to n', category: 'math', icon: '\u2211' },
+  { id: 'integral-full', name: 'integral (full)', description: '\u222B with bounds a to b', category: 'math', icon: '\u222B' },
+  { id: 'limit', name: 'limit', description: 'lim as x approaches', category: 'math', icon: 'lim' },
+
+  // Matrices
+  { id: 'matrix-2x2', name: 'matrix 2\u00D72', description: 'Insert 2\u00D72 matrix', category: 'matrix', icon: '\u229E' },
+  { id: 'matrix-2x3', name: 'matrix 2\u00D73', description: 'Insert 2\u00D73 matrix', category: 'matrix', icon: '\u229E' },
+  { id: 'matrix-3x2', name: 'matrix 3\u00D72', description: 'Insert 3\u00D72 matrix', category: 'matrix', icon: '\u229E' },
+  { id: 'matrix-3x3', name: 'matrix 3\u00D73', description: 'Insert 3\u00D73 matrix', category: 'matrix', icon: '\u229E' },
+  { id: 'matrix-4x4', name: 'matrix 4\u00D74', description: 'Insert 4\u00D74 matrix', category: 'matrix', icon: '\u229E' },
 ];
 
 const filteredCommands = computed(() => {
@@ -269,22 +349,45 @@ const filteredCommands = computed(() => {
   const query = commandQuery.value.toLowerCase();
   return commands.filter(cmd =>
     cmd.name.toLowerCase().includes(query) ||
-    cmd.description.toLowerCase().includes(query)
+    cmd.description.toLowerCase().includes(query) ||
+    cmd.id.toLowerCase().includes(query)
   );
 });
 
-const mathSymbols: MathSymbol[] = [
-  { id: 'sigma', name: 'Sigma', display: 'Σ' },
-  { id: 'integral', name: 'Integral', display: '∫' },
-  { id: 'sqrt', name: 'Square root', display: '√' },
-  { id: 'pi', name: 'Pi', display: 'π' },
-  { id: 'theta', name: 'Theta', display: 'θ' },
-  { id: 'alpha', name: 'Alpha', display: 'α' },
-  { id: 'beta', name: 'Beta', display: 'β' },
-  { id: 'gamma', name: 'Gamma', display: 'γ' },
-  { id: 'delta', name: 'Delta', display: 'δ' },
-  { id: 'lambda', name: 'Lambda', display: 'λ' },
-];
+// Grouped commands by category for display
+const filteredCommandsByCategory = computed(() => {
+  const cmds = filteredCommands.value;
+  if (cmds.length === 0) return [];
+
+  const categoryLabels: Record<string, string> = {
+    'symbol': 'Greek Letters',
+    'operator': 'Operators',
+    'math': 'Math Structures',
+    'matrix': 'Matrices',
+    'insert': 'Insert',
+  };
+
+  const categories = ['symbol', 'operator', 'math', 'matrix', 'insert'];
+  const groups: Array<{ category: string; label: string; commands: Command[] }> = [];
+
+  for (const cat of categories) {
+    const catCommands = cmds.filter(c => c.category === cat);
+    if (catCommands.length > 0) {
+      groups.push({
+        category: cat,
+        label: categoryLabels[cat] || cat,
+        commands: catCommands,
+      });
+    }
+  }
+
+  // Set default selected if needed
+  if (groups.length > 0 && !cmds.find(c => c.id === selectedCommandId.value)) {
+    selectedCommandId.value = groups[0].commands[0].id;
+  }
+
+  return groups;
+});
 
 // Palette position
 const palettePosition = computed(() => {
@@ -298,7 +401,7 @@ const palettePosition = computed(() => {
   };
 });
 
-// Helper functions
+// ─── Helper functions ──────────────────────────────────────
 function flattenMatrix(line: MatrixLine) {
   const cells: Array<{ row: number, col: number, value: string }> = [];
   for (let r = 0; r < line.rows; r++) {
@@ -310,10 +413,8 @@ function flattenMatrix(line: MatrixLine) {
 }
 
 function gridStyle(line: MatrixLine) {
-  // Responsive cell sizing based on matrix size
   const cellWidth = line.cols > 3 ? '38px' : '45px';
   const cellHeight = '32px';
-  
   return {
     gridTemplateColumns: `repeat(${line.cols}, ${cellWidth})`,
     gridTemplateRows: `repeat(${line.rows}, ${cellHeight})`,
@@ -322,26 +423,22 @@ function gridStyle(line: MatrixLine) {
 }
 
 function bracketHeight(line: MatrixLine) {
-  // Dynamic bracket height based on content
   const cellHeight = 32;
-  const spacing = 0;
   const padding = 6;
   const totalHeight = (line.rows * cellHeight) + padding;
   return `${totalHeight}px`;
 }
 
-// KEYBOARD HANDLING: All input comes from hidden input
+// ─── KEYBOARD HANDLING ─────────────────────────────────────
 function handleKeydown(event: KeyboardEvent) {
-  // Command palette navigation
   if (showCommandPalette.value) {
     return; // Let palette input handle it
   }
 
-  // Special keys that don't produce characters
   if (event.key === '/') {
     showCommandPalette.value = true;
     commandQuery.value = '';
-    selectedCommandIndex.value = 0;
+    selectedCommandId.value = commands[0]?.id || '';
     event.preventDefault();
     nextTick(() => {
       paletteInputRef.value?.focus();
@@ -387,13 +484,11 @@ function handleKeydown(event: KeyboardEvent) {
 
   if (event.key === 'Escape') {
     if (cursor.value.zone === 'matrix') {
-      // Exit matrix to next line
       const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
       if (lineIndex < document.value.length - 1) {
         const nextLine = document.value[lineIndex + 1];
         cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
       } else {
-        // Create new line
         insertNewLine();
       }
     }
@@ -402,11 +497,10 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
-// Regular character input
 function handleInput(event: Event) {
   const target = event.target as HTMLInputElement;
   const char = target.value;
-  
+
   if (char && char.length > 0) {
     if (cursor.value.zone === 'text') {
       insertCharAtCursor(char);
@@ -414,13 +508,11 @@ function handleInput(event: Event) {
       insertCharInMatrix(char);
     }
   }
-  
-  // Clear input for next keystroke
+
   target.value = '';
 }
 
 function handleBlur() {
-  // Keep focus on hidden input unless palette is open
   if (!showCommandPalette.value) {
     nextTick(() => {
       hiddenInput.value?.focus();
@@ -432,14 +524,12 @@ function handleFocus() {
   // Hidden input is always focused
 }
 
-// Navigation
+// ─── Navigation ────────────────────────────────────────────
 function handleArrowUp() {
   if (cursor.value.zone === 'matrix') {
-    const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
     if (cursor.value.row > 0) {
       cursor.value = { ...cursor.value, row: cursor.value.row - 1 };
     } else {
-      // Exit to previous line
       const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
       if (lineIndex > 0) {
         const prevLine = document.value[lineIndex - 1];
@@ -450,7 +540,11 @@ function handleArrowUp() {
     const currentLineIndex = notesStore.getLineIndex(cursor.value.lineId);
     if (currentLineIndex > 0) {
       const prevLine = document.value[currentLineIndex - 1];
-      cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+      if (prevLine.type === 'matrix') {
+        cursor.value = { zone: 'matrix', lineId: prevLine.id, row: (prevLine as MatrixLine).rows - 1, col: 0 };
+      } else {
+        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+      }
     }
   }
 }
@@ -461,7 +555,6 @@ function handleArrowDown() {
     if (cursor.value.row < line.rows - 1) {
       cursor.value = { ...cursor.value, row: cursor.value.row + 1 };
     } else {
-      // Exit to next line
       const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
       if (lineIndex < document.value.length - 1) {
         const nextLine = document.value[lineIndex + 1];
@@ -495,7 +588,6 @@ function handleArrowLeft() {
     } else if (cursor.value.row > 0) {
       cursor.value = { ...cursor.value, row: cursor.value.row - 1, col: line.cols - 1 };
     } else {
-      // Exit matrix to previous line
       const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
       if (lineIndex > 0) {
         const prevLine = document.value[lineIndex - 1];
@@ -508,9 +600,11 @@ function handleArrowLeft() {
 function handleArrowRight() {
   if (cursor.value.zone === 'text') {
     const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine;
-    const lineLength = currentLine.content.reduce((sum, seg) => sum + (seg.type === 'text' ? seg.value.length : 1), 0);
-    if (cursor.value.charOffset < lineLength) {
-      cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 };
+    if (currentLine && currentLine.type === 'text') {
+      const lineLength = currentLine.content.reduce((sum, seg) => sum + (seg.type === 'text' ? seg.value.length : 1), 0);
+      if (cursor.value.charOffset < lineLength) {
+        cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 };
+      }
     }
   } else if (cursor.value.zone === 'matrix') {
     const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
@@ -519,7 +613,6 @@ function handleArrowRight() {
     } else if (cursor.value.row < line.rows - 1) {
       cursor.value = { ...cursor.value, row: cursor.value.row + 1, col: 0 };
     } else {
-      // Exit matrix to next line
       const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
       if (lineIndex < document.value.length - 1) {
         const nextLine = document.value[lineIndex + 1];
@@ -531,19 +624,19 @@ function handleArrowRight() {
   }
 }
 
-// Insertion operations
+// ─── Insertion operations ──────────────────────────────────
 function insertCharAtCursor(char: string) {
   if (cursor.value.zone !== 'text') return;
 
-  const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine;
-  if (!currentLine) return;
+  const currentLine = notesStore.getLineById(cursor.value.lineId);
+  if (!currentLine || currentLine.type !== 'text') return;
+  const textLine = currentLine as TextLine;
 
-  // Append to last text segment
-  const lastSegment = currentLine.content[currentLine.content.length - 1];
+  const lastSegment = textLine.content[textLine.content.length - 1];
   if (lastSegment?.type === 'text') {
     lastSegment.value += char;
   } else {
-    currentLine.content.push({ type: 'text', value: char });
+    textLine.content.push({ type: 'text', value: char });
   }
 
   cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 };
@@ -556,50 +649,56 @@ function insertCharInMatrix(char: string) {
   const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
   if (!line) return;
 
-  // Replace cell value with new character
   line.data[cursor.value.row][cursor.value.col] = char;
-  
-  // Auto-advance to next cell
+
   if (cursor.value.col < line.cols - 1) {
     cursor.value = { ...cursor.value, col: cursor.value.col + 1 };
   } else if (cursor.value.row < line.rows - 1) {
     cursor.value = { ...cursor.value, row: cursor.value.row + 1, col: 0 };
   }
-  
+
   updateDocument();
 }
 
 function deleteCharAtCursor() {
   if (cursor.value.zone === 'text') {
-    const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine;
+    const currentLine = notesStore.getLineById(cursor.value.lineId);
     if (!currentLine) return;
 
-    // Try to delete last character from last text segment
-    const lastSegment = currentLine.content[currentLine.content.length - 1];
-    
+    // Handle math expression line deletion
+    if (currentLine.type === 'math') {
+      deleteMathExpression(cursor.value.lineId);
+      return;
+    }
+
+    if (currentLine.type !== 'text') return;
+    const textLine = currentLine as TextLine;
+
+    const lastSegment = textLine.content[textLine.content.length - 1];
+
     if (lastSegment?.type === 'text' && lastSegment.value.length > 0) {
-      // Delete character from text
       lastSegment.value = lastSegment.value.slice(0, -1);
       cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
       updateDocument();
     } else if (lastSegment?.type === 'symbol') {
-      // Delete last symbol
-      currentLine.content.pop();
+      textLine.content.pop();
       cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
       updateDocument();
-    } else if (currentLine.content.length === 1 && 
-               currentLine.content[0].type === 'text' && 
-               currentLine.content[0].value === '' &&
+    } else if (textLine.content.length === 1 &&
+               textLine.content[0].type === 'text' &&
+               textLine.content[0].value === '' &&
                notesStore.activeNote &&
                notesStore.activeNote.content.length > 1) {
-      // Delete empty line (only if not the only line in document)
       const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
       notesStore.activeNote.content.splice(lineIndex, 1);
-      
-      // Move cursor to previous line
+
       if (lineIndex > 0) {
         const prevLine = document.value[lineIndex - 1];
-        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+        if (prevLine.type === 'matrix') {
+          cursor.value = { zone: 'matrix', lineId: prevLine.id, row: 0, col: 0 };
+        } else {
+          cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+        }
       } else if (document.value.length > 0) {
         cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 };
       }
@@ -609,15 +708,12 @@ function deleteCharAtCursor() {
     const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
     if (!line) return;
 
-    // Check if matrix is empty
     const isEmpty = line.data.every(row => row.every(cell => cell === ''));
-    
+
     if (isEmpty && notesStore.activeNote && notesStore.activeNote.content.length > 1) {
-      // Delete entire empty matrix
       const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
       notesStore.activeNote.content.splice(lineIndex, 1);
-      
-      // Move cursor to previous line
+
       if (lineIndex > 0) {
         const prevLine = document.value[lineIndex - 1];
         cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
@@ -626,7 +722,6 @@ function deleteCharAtCursor() {
       }
       updateDocument();
     } else {
-      // Just clear current cell
       line.data[cursor.value.row][cursor.value.col] = '';
       updateDocument();
     }
@@ -651,20 +746,70 @@ function insertNewLine() {
 function insertSymbol(symbolId: SymbolSpan['value']) {
   if (cursor.value.zone !== 'text') return;
 
-  const symbol = mathSymbols.find(s => s.id === symbolId);
-  if (!symbol) return;
+  const symbolMap: Record<string, { value: SymbolSpan['value']; display: string }> = {
+    'sigma': { value: 'sigma', display: '\u03A3' },
+    'sum': { value: 'sum', display: '\u2211' },
+    'integral': { value: 'integral', display: '\u222B' },
+    'sqrt': { value: 'sqrt', display: '\u221A' },
+    'pi': { value: 'pi', display: '\u03C0' },
+    'theta': { value: 'theta', display: '\u03B8' },
+    'alpha': { value: 'alpha', display: '\u03B1' },
+    'beta': { value: 'beta', display: '\u03B2' },
+    'gamma': { value: 'gamma', display: '\u03B3' },
+    'delta': { value: 'delta', display: '\u03B4' },
+    'lambda': { value: 'lambda', display: '\u03BB' },
+    'plus': { value: 'plus', display: '+' },
+    'minus': { value: 'minus', display: '\u2212' },
+    'times': { value: 'times', display: '\u00D7' },
+    'divide': { value: 'divide', display: '\u00F7' },
+    'equals': { value: 'equals', display: '=' },
+    'approx': { value: 'approx', display: '\u2248' },
+    'leq': { value: 'leq', display: '\u2264' },
+    'geq': { value: 'geq', display: '\u2265' },
+    'infinity': { value: 'infinity', display: '\u221E' },
+  };
 
-  const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine;
-  if (currentLine) {
-    currentLine.content.push({
+  const sym = symbolMap[symbolId];
+  if (!sym) return;
+
+  const currentLine = notesStore.getLineById(cursor.value.lineId);
+  if (currentLine && currentLine.type === 'text') {
+    (currentLine as TextLine).content.push({
       type: 'symbol',
-      value: symbolId,
-      display: symbol.display
+      value: sym.value,
+      display: sym.display
     });
+    cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 };
     updateDocument();
   }
 
   closeCommandPalette();
+}
+
+// Insert a math expression (KaTeX rendered) line
+function insertMathSymbol(symbolId: string) {
+  // Math structures get their own KaTeX-rendered line
+  const mathStructures = ['fraction', 'sqrt', 'power', 'subscript', 'sum-full', 'integral-full', 'limit'];
+
+  if (mathStructures.includes(symbolId)) {
+    const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+    const displayMode = isDisplayModeSymbol(symbolId);
+    const mathLine = createMathExpression(symbolId, displayMode);
+
+    if (notesStore.activeNote) {
+      notesStore.activeNote.content.splice(lineIndex + 1, 0, mathLine);
+      updateDocument();
+      cursor.value = {
+        zone: 'text',
+        lineId: mathLine.id,
+        charOffset: 0
+      };
+    }
+    closeCommandPalette();
+  } else {
+    // Simple symbols get inserted as inline symbols on the current text line
+    insertSymbol(symbolId as SymbolSpan['value']);
+  }
 }
 
 function insertMatrix(rows: number, cols: number) {
@@ -692,6 +837,52 @@ function insertMatrix(rows: number, cols: number) {
   closeCommandPalette();
 }
 
+// ─── Math expression operations ────────────────────────────
+function focusMathExpression(lineId: string) {
+  cursor.value = {
+    zone: 'text',
+    lineId,
+    charOffset: 0
+  };
+}
+
+function updateMathLatex(lineId: string, latex: string) {
+  const line = notesStore.getLineById(lineId);
+  if (line && line.type === 'math') {
+    (line as MathExpressionLine).latex = latex;
+    updateDocument();
+  }
+}
+
+function blurMathExpression() {
+  nextTick(() => {
+    hiddenInput.value?.focus();
+  });
+}
+
+function deleteMathExpression(lineId: string) {
+  if (!notesStore.activeNote || notesStore.activeNote.content.length <= 1) return;
+
+  const lineIndex = notesStore.getLineIndex(lineId);
+  notesStore.activeNote.content.splice(lineIndex, 1);
+
+  if (lineIndex > 0) {
+    const prevLine = document.value[lineIndex - 1];
+    if (prevLine.type === 'matrix') {
+      cursor.value = { zone: 'matrix', lineId: prevLine.id, row: 0, col: 0 };
+    } else {
+      cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+    }
+  } else if (document.value.length > 0) {
+    cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 };
+  }
+
+  updateDocument();
+  nextTick(() => {
+    hiddenInput.value?.focus();
+  });
+}
+
 function focusMatrixCell(lineId: string, row: number, col: number) {
   cursor.value = {
     zone: 'matrix',
@@ -702,9 +893,10 @@ function focusMatrixCell(lineId: string, row: number, col: number) {
   hiddenInput.value?.focus();
 }
 
+// ─── Display click handling (fixed for empty lines) ────────
 function handleDisplayClick(event: MouseEvent) {
   const target = event.target as HTMLElement;
-  
+
   // Click on matrix cell
   if (target.classList.contains('matrix-cell-textbook')) {
     const cellEl = target;
@@ -720,40 +912,72 @@ function handleDisplayClick(event: MouseEvent) {
     return;
   }
 
-  // Click on text line - set cursor to beginning of line
+  // Click on a math expression container - let the MathExpression component handle it
+  const mathExprEl = target.closest('.math-expression');
+  if (mathExprEl) {
+    return;
+  }
+
+  // Click on text line (including empty lines) - set cursor to that line
   const lineEl = target.closest('.container-line');
   if (lineEl) {
     const lineId = lineEl.getAttribute('data-line-id');
     if (lineId) {
-      cursor.value = {
-        zone: 'text',
-        lineId: lineId,
-        charOffset: 0
-      };
+      const line = notesStore.getLineById(lineId);
+      if (line && line.type === 'matrix') {
+        focusMatrixCell(lineId, 0, 0);
+      } else {
+        cursor.value = {
+          zone: 'text',
+          lineId: lineId,
+          charOffset: 0
+        };
+      }
       hiddenInput.value?.focus();
     }
     return;
   }
 
-  // Fallback: just focus hidden input
+  // Click in empty editor space (below all lines) - focus last line
+  const editorDisplay = target.closest('.editor-display');
+  if (editorDisplay && document.value.length > 0) {
+    const lastLine = document.value[document.value.length - 1];
+    if (lastLine.type === 'matrix') {
+      cursor.value = { zone: 'matrix', lineId: lastLine.id, row: 0, col: 0 };
+    } else {
+      cursor.value = { zone: 'text', lineId: lastLine.id, charOffset: 0 };
+    }
+    hiddenInput.value?.focus();
+    return;
+  }
+
+  // Fallback
   hiddenInput.value?.focus();
 }
 
-function handleMouseMove(event: MouseEvent) {
+function handleMouseMove(_event: MouseEvent) {
   // Could use for text selection later
 }
 
-// Command palette
+// ─── Command palette ───────────────────────────────────────
 function handlePaletteKeydown(event: KeyboardEvent) {
+  const allCommands = filteredCommands.value;
+  const currentIndex = allCommands.findIndex(c => c.id === selectedCommandId.value);
+
   if (event.key === 'ArrowDown') {
-    selectedCommandIndex.value = Math.min(selectedCommandIndex.value + 1, filteredCommands.value.length - 1);
+    const nextIndex = Math.min(currentIndex + 1, allCommands.length - 1);
+    selectedCommandId.value = allCommands[nextIndex]?.id || '';
+    scrollSelectedIntoView();
     event.preventDefault();
   } else if (event.key === 'ArrowUp') {
-    selectedCommandIndex.value = Math.max(selectedCommandIndex.value - 1, 0);
+    const prevIndex = Math.max(currentIndex - 1, 0);
+    selectedCommandId.value = allCommands[prevIndex]?.id || '';
+    scrollSelectedIntoView();
     event.preventDefault();
   } else if (event.key === 'Enter') {
-    if (filteredCommands.value[selectedCommandIndex.value]) {
-      executeCommand(filteredCommands.value[selectedCommandIndex.value]);
+    const cmd = allCommands.find(c => c.id === selectedCommandId.value);
+    if (cmd) {
+      executeCommand(cmd);
     }
     event.preventDefault();
   } else if (event.key === 'Escape') {
@@ -762,13 +986,22 @@ function handlePaletteKeydown(event: KeyboardEvent) {
   }
 }
 
+function scrollSelectedIntoView() {
+  nextTick(() => {
+    const selected = window.document.querySelector('.palette-item.selected');
+    selected?.scrollIntoView({ block: 'nearest' });
+  });
+}
+
 function executeCommand(cmd: Command) {
   if (cmd.id.startsWith('matrix-')) {
     const [, size] = cmd.id.split('-');
     const [rows, cols] = size.split('x').map(Number);
     insertMatrix(rows, cols);
-  } else if (cmd.category === 'symbol') {
-    insertSymbol(cmd.id as SymbolSpan['value']);
+  } else if (cmd.category === 'math') {
+    insertMathSymbol(cmd.id);
+  } else if (cmd.category === 'symbol' || cmd.category === 'operator') {
+    insertMathSymbol(cmd.id);
   }
 }
 
@@ -778,7 +1011,7 @@ function closeCommandPalette() {
   hiddenInput.value?.focus();
 }
 
-// Helper functions
+// ─── Utility functions ─────────────────────────────────────
 function createNewNote() {
   notesStore.createNote();
 }
@@ -960,16 +1193,18 @@ function generateId(): string {
   user-select: none;
   position: relative;
   background: var(--color-bg-primary);
+  min-height: 200px;
 }
 
-/* Container lines - allows text to flow naturally */
+/* Container lines */
 .container-line {
   display: block;
-  min-height: auto;
+  min-height: 1.7em;
   position: relative;
   word-wrap: break-word;
   margin: 8px 0;
   padding: 2px 0;
+  cursor: text;
 }
 
 .container-line::before {
@@ -982,7 +1217,7 @@ function generateId(): string {
   width: 32px;
 }
 
-/* Text segments - flow inline naturally */
+/* Text segments */
 .text-segment {
   display: inline;
   font-family: inherit;
@@ -998,7 +1233,20 @@ function generateId(): string {
   vertical-align: -2px;
 }
 
-/* CRITICAL: Matrix is INLINE - flows with text */
+/* Empty line placeholder - ensures clickable area */
+.empty-line-placeholder {
+  display: inline-block;
+  width: 100%;
+  min-height: 1.7em;
+  vertical-align: baseline;
+}
+
+/* Math expression line styling */
+.container-line.is-math-line {
+  min-height: auto;
+}
+
+/* CRITICAL: Matrix is INLINE */
 .matrix-inline {
   display: inline-flex;
   align-items: center;
@@ -1016,7 +1264,6 @@ function generateId(): string {
   opacity: 1;
 }
 
-/* Brackets - professional looking, scale with matrix */
 .matrix-bracket {
   width: 14px;
   flex-shrink: 0;
@@ -1032,7 +1279,6 @@ function generateId(): string {
   stroke-linecap: round;
 }
 
-/* Matrix grid - clean, no visible borders */
 .matrix-grid {
   display: inline-grid;
   grid-auto-flow: row;
@@ -1041,7 +1287,6 @@ function generateId(): string {
   margin: 0;
 }
 
-/* TEXTBOOK STYLE: Matrix cells with no borders, subtle spacing */
 .matrix-cell-textbook {
   min-width: 45px;
   min-height: 32px;
@@ -1059,7 +1304,6 @@ function generateId(): string {
   transition: all 0.15s;
 }
 
-/* Active cell gets subtle highlight, not big border */
 .matrix-cell-textbook.is-active {
   background: rgba(33, 150, 243, 0.08);
   border-bottom: 2px solid #2196F3;
@@ -1067,7 +1311,6 @@ function generateId(): string {
   font-weight: 500;
 }
 
-/* Hover state */
 .matrix-cell-textbook:hover {
   background: rgba(0, 0, 0, 0.02);
 }
@@ -1092,12 +1335,12 @@ function generateId(): string {
 .command-palette {
   position: fixed;
   z-index: 1000;
-  background: white;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  min-width: 400px;
-  max-height: 400px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  min-width: 420px;
+  max-height: 440px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1107,13 +1350,13 @@ function generateId(): string {
   display: flex;
   align-items: center;
   padding: 10px 12px;
-  border-bottom: 1px solid #eee;
-  background: #f5f5f5;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-bg-secondary);
 }
 
 .palette-icon {
   font-size: 16px;
-  color: #666;
+  color: var(--color-accent);
   margin-right: 8px;
   font-weight: bold;
 }
@@ -1125,27 +1368,40 @@ function generateId(): string {
   font-size: 14px;
   background: transparent;
   font-family: inherit;
-  color: #333;
+  color: var(--color-text-primary);
 }
 
 .palette-input::placeholder {
-  color: #999;
+  color: var(--color-text-disabled);
 }
 
 .palette-list {
   flex: 1;
   overflow-y: auto;
-  max-height: 300px;
+  max-height: 360px;
+}
+
+.palette-category-label {
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border-light);
+  position: sticky;
+  top: 0;
 }
 
 .palette-item {
   display: flex;
   align-items: center;
-  padding: 10px 12px;
+  padding: 8px 12px;
   cursor: pointer;
-  transition: background 0.2s;
-  border-bottom: 1px solid #f0f0f0;
-  color: #333;
+  transition: background 0.1s;
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text-primary);
 }
 
 .palette-item:last-child {
@@ -1153,19 +1409,27 @@ function generateId(): string {
 }
 
 .palette-item:hover {
-  background: #f0f8ff;
+  background: var(--color-bg-hover);
 }
 
 .palette-item.selected {
-  background: #e3f2fd;
-  border-left: 3px solid #2196F3;
+  background: var(--color-accent-light);
+  border-left: 3px solid var(--color-accent);
+}
+
+.palette-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
 }
 
 .cmd-icon {
-  font-size: 18px;
+  font-size: 20px;
   margin-right: 12px;
-  min-width: 24px;
+  min-width: 28px;
   text-align: center;
+  color: var(--color-text-secondary);
 }
 
 .cmd-info {
@@ -1177,13 +1441,13 @@ function generateId(): string {
 .cmd-name {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: var(--color-text-primary);
 }
 
 .cmd-desc {
   font-size: 12px;
-  color: #999;
-  margin-top: 2px;
+  color: var(--color-text-tertiary);
+  margin-top: 1px;
 }
 
 /* RIGHT SIDEBAR */
@@ -1202,29 +1466,50 @@ function generateId(): string {
 
 .keypad-section h4 {
   margin: 0 0 var(--spacing-sm) 0;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  color: var(--color-text-secondary);
+  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary);
+  font-weight: 700;
 }
 
 .keypad-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--spacing-sm);
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
 }
 
 .keypad-btn {
-  padding: var(--spacing-sm);
+  padding: 8px 4px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-primary);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s;
+  font-size: 18px;
+  text-align: center;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .keypad-btn:hover {
   background: var(--color-accent-light);
   border-color: var(--color-accent);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.keypad-btn:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.keypad-btn-text {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'Georgia', 'Times New Roman', serif;
 }
 
 .shortcuts-list {

@@ -216,13 +216,40 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
-/* KaTeX styles */
-.katex-display {
-  margin: var(--spacing-md) 0;
-}
-
+/* KaTeX math rendering */
 .katex {
   font-size: 1.1em;
+  font-family: 'Cambria Math', 'TeX Gyre Termes', KaTeX_Main, serif;
+}
+
+.katex-display {
+  margin: var(--spacing-sm) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.katex-display > .katex {
+  white-space: normal;
+}
+
+/* Dark theme KaTeX */
+[data-theme='dark'] .katex {
+  color: #e9ecef;
+}
+
+[data-theme='dark'] .katex-html {
+  color: #e9ecef;
+}
+
+[data-theme='dark'] .katex .mord,
+[data-theme='dark'] .katex .mop,
+[data-theme='dark'] .katex .mbin,
+[data-theme='dark'] .katex .mrel,
+[data-theme='dark'] .katex .mopen,
+[data-theme='dark'] .katex .mclose,
+[data-theme='dark'] .katex .mpunct,
+[data-theme='dark'] .katex .minner {
+  color: #e9ecef;
 }
 
 /* Dark theme - Command Palette */
