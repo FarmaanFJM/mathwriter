@@ -74,7 +74,37 @@
               class="text-segment"
             >
               <template v-if="segment.type === 'text'">{{ segment.value }}</template>
-              <span v-else class="symbol">{{ segment.display }}</span>
+              <span v-else-if="segment.type === 'symbol'" class="symbol">{{ segment.display }}</span>
+              <span v-else class="matrix-inline">
+                <span class="matrix-bracket bracket-left" :style="{ height: bracketHeight(segment) }">
+                  <svg viewBox="0 0 20 100" preserveAspectRatio="none">
+                    <path d="M 15 0 L 5 0 L 5 100 L 15 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
+                  </svg>
+                </span>
+
+                <span class="matrix-grid" :style="gridStyle(segment)">
+                  <span
+                    v-for="(cell, cellIdx) in flattenMatrix(segment)"
+                    :key="`${segment.id}-${cellIdx}`"
+                    class="matrix-cell-textbook"
+                    :class="{
+                      'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.matrixId === segment.id && cursor.row === cell.row && cursor.col === cell.col
+                    }"
+                    :data-row="cell.row"
+                    :data-col="cell.col"
+                    :data-matrix-id="segment.id"
+                    @click.stop="focusMatrixCell(line.id, segment.id, cell.row, cell.col)"
+                  >
+                    {{ cell.value || '_' }}
+                  </span>
+                </span>
+
+                <span class="matrix-bracket bracket-right" :style="{ height: bracketHeight(segment) }">
+                  <svg viewBox="0 0 20 100" preserveAspectRatio="none">
+                    <path d="M 5 0 L 15 0 L 15 100 L 5 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
+                  </svg>
+                </span>
+              </span>
             </span>
 
             <span
@@ -104,7 +134,7 @@
             v-else-if="line.type === 'matrix'"
             class="matrix-inline"
             :class="{ 'is-editing': cursor.zone === 'matrix' && cursor.lineId === line.id }"
-            @click.stop="focusMatrixCell(line.id, 0, 0)"
+            @click.stop="focusMatrixCell(line.id, line.id, 0, 0)"
           >
             <!-- Left bracket -->
             <div class="matrix-bracket bracket-left" :style="{ height: bracketHeight(line) }">
@@ -120,11 +150,12 @@
                 :key="`${line.id}-${cellIdx}`"
                 class="matrix-cell-textbook"
                 :class="{ 
-                  'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.row === cell.row && cursor.col === cell.col
+                  'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.matrixId === line.id && cursor.row === cell.row && cursor.col === cell.col
                 }"
                 :data-row="cell.row"
                 :data-col="cell.col"
-                @click.stop="focusMatrixCell(line.id, cell.row, cell.col)"
+                :data-matrix-id="line.id"
+                @click.stop="focusMatrixCell(line.id, line.id, cell.row, cell.col)"
               >
                 {{ cell.value || '_' }}
               </div>
@@ -250,7 +281,7 @@ import { useNotesStore } from '../stores/notesStore';
 import { useEditorStore } from '../stores/editorStore';
 import MathExpression from './MathExpression.vue';
 import { createMathExpression, symbolToLatex } from '../utils/latexMapping';
-import type { CursorPosition, TextLine, MatrixLine, MathExpressionLine, Command } from '../types/editor';
+import type { CursorPosition, TextLine, MatrixLine, MatrixSpan, MathExpressionLine, Command } from '../types/editor';
 
 const notesStore = useNotesStore();
 const editorStore = useEditorStore();
@@ -341,7 +372,7 @@ const palettePosition = computed(() => {
 });
 
 // Helper functions
-function flattenMatrix(line: MatrixLine) {
+function flattenMatrix(line: MatrixLine | MatrixSpan) {
   const cells: Array<{ row: number, col: number, value: string }> = [];
   for (let r = 0; r < line.rows; r++) {
     for (let c = 0; c < line.cols; c++) {
@@ -351,7 +382,7 @@ function flattenMatrix(line: MatrixLine) {
   return cells;
 }
 
-function gridStyle(line: MatrixLine) {
+function gridStyle(line: MatrixLine | MatrixSpan) {
   // Responsive cell sizing based on matrix size
   const cellWidth = line.cols > 3 ? '38px' : '45px';
   const cellHeight = '32px';
@@ -363,13 +394,34 @@ function gridStyle(line: MatrixLine) {
   };
 }
 
-function bracketHeight(line: MatrixLine) {
+function bracketHeight(line: MatrixLine | MatrixSpan) {
   // Dynamic bracket height based on content
   const cellHeight = 32;
   const spacing = 0;
   const padding = 6;
   const totalHeight = (line.rows * cellHeight) + padding;
   return `${totalHeight}px`;
+}
+
+function getMatrixByCursor() {
+  if (cursor.value.zone !== 'matrix') return null;
+  const line = notesStore.getLineById(cursor.value.lineId) as TextLine | MatrixLine | null;
+  if (!line) return null;
+
+  if (line.type === 'matrix') {
+    return { line, matrix: line };
+  }
+
+  if (line.type === 'text') {
+    const matrix = line.content.find(
+      (segment): segment is MatrixSpan => segment.type === 'matrix' && segment.id === cursor.value.matrixId
+    );
+    if (matrix) {
+      return { line, matrix };
+    }
+  }
+
+  return null;
 }
 
 // KEYBOARD HANDLING: All input comes from hidden input
@@ -429,14 +481,19 @@ function handleKeydown(event: KeyboardEvent) {
 
   if (event.key === 'Escape') {
     if (cursor.value.zone === 'matrix') {
-      // Exit matrix to next line
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
-      if (lineIndex < document.value.length - 1) {
-        const nextLine = document.value[lineIndex + 1];
-        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+      const line = notesStore.getLineById(cursor.value.lineId) as TextLine | MatrixLine | null;
+      if (line?.type === 'text') {
+        cursor.value = { zone: 'text', lineId: line.id, charOffset: 0 };
       } else {
-        // Create new line
-        insertNewLine();
+        // Exit matrix to next line
+        const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+        if (lineIndex < document.value.length - 1) {
+          const nextLine = document.value[lineIndex + 1];
+          cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+        } else {
+          // Create new line
+          insertNewLine();
+        }
       }
     }
     event.preventDefault();
@@ -477,7 +534,8 @@ function handleFocus() {
 // Navigation
 function handleArrowUp() {
   if (cursor.value.zone === 'matrix') {
-    const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
+    const matrixData = getMatrixByCursor();
+    if (!matrixData) return;
     if (cursor.value.row > 0) {
       cursor.value = { ...cursor.value, row: cursor.value.row - 1 };
     } else {
@@ -499,8 +557,9 @@ function handleArrowUp() {
 
 function handleArrowDown() {
   if (cursor.value.zone === 'matrix') {
-    const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
-    if (cursor.value.row < line.rows - 1) {
+    const matrixData = getMatrixByCursor();
+    if (!matrixData) return;
+    if (cursor.value.row < matrixData.matrix.rows - 1) {
       cursor.value = { ...cursor.value, row: cursor.value.row + 1 };
     } else {
       // Exit to next line
@@ -517,7 +576,7 @@ function handleArrowDown() {
     if (currentLineIndex < document.value.length - 1) {
       const nextLine = document.value[currentLineIndex + 1];
       if (nextLine.type === 'matrix') {
-        cursor.value = { zone: 'matrix', lineId: nextLine.id, row: 0, col: 0 };
+        cursor.value = { zone: 'matrix', lineId: nextLine.id, matrixId: nextLine.id, row: 0, col: 0 };
       } else {
         cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
       }
@@ -541,11 +600,12 @@ function handleArrowLeft() {
       cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset - 1 };
     }
   } else if (cursor.value.zone === 'matrix') {
-    const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
+    const matrixData = getMatrixByCursor();
+    if (!matrixData) return;
     if (cursor.value.col > 0) {
       cursor.value = { ...cursor.value, col: cursor.value.col - 1 };
     } else if (cursor.value.row > 0) {
-      cursor.value = { ...cursor.value, row: cursor.value.row - 1, col: line.cols - 1 };
+      cursor.value = { ...cursor.value, row: cursor.value.row - 1, col: matrixData.matrix.cols - 1 };
     } else {
       // Exit matrix to previous line
       const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
@@ -576,10 +636,11 @@ function handleArrowRight() {
       cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 };
     }
   } else if (cursor.value.zone === 'matrix') {
-    const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
-    if (cursor.value.col < line.cols - 1) {
+    const matrixData = getMatrixByCursor();
+    if (!matrixData) return;
+    if (cursor.value.col < matrixData.matrix.cols - 1) {
       cursor.value = { ...cursor.value, col: cursor.value.col + 1 };
-    } else if (cursor.value.row < line.rows - 1) {
+    } else if (cursor.value.row < matrixData.matrix.rows - 1) {
       cursor.value = { ...cursor.value, row: cursor.value.row + 1, col: 0 };
     } else {
       // Exit matrix to next line
@@ -616,16 +677,17 @@ function insertCharAtCursor(char: string) {
 function insertCharInMatrix(char: string) {
   if (cursor.value.zone !== 'matrix') return;
 
-  const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
-  if (!line) return;
+  const matrixData = getMatrixByCursor();
+  if (!matrixData) return;
+  const matrix = matrixData.matrix;
 
   // Replace cell value with new character
-  line.data[cursor.value.row][cursor.value.col] = char;
+  matrix.data[cursor.value.row][cursor.value.col] = char;
   
   // Auto-advance to next cell
-  if (cursor.value.col < line.cols - 1) {
+  if (cursor.value.col < matrix.cols - 1) {
     cursor.value = { ...cursor.value, col: cursor.value.col + 1 };
-  } else if (cursor.value.row < line.rows - 1) {
+  } else if (cursor.value.row < matrix.rows - 1) {
     cursor.value = { ...cursor.value, row: cursor.value.row + 1, col: 0 };
   }
   
@@ -667,6 +729,10 @@ function deleteCharAtCursor() {
       currentLine.content.pop();
       cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
       updateDocument();
+    } else if (lastSegment?.type === 'matrix') {
+      currentLine.content.pop();
+      cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
+      updateDocument();
     } else if (currentLine.content.length === 1 && 
                currentLine.content[0].type === 'text' && 
                currentLine.content[0].value === '' &&
@@ -686,28 +752,36 @@ function deleteCharAtCursor() {
       updateDocument();
     }
   } else if (cursor.value.zone === 'matrix') {
-    const line = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
-    if (!line) return;
+    const matrixData = getMatrixByCursor();
+    if (!matrixData) return;
 
     // Check if matrix is empty
-    const isEmpty = line.data.every(row => row.every(cell => cell === ''));
+    const isEmpty = matrixData.matrix.data.every(row => row.every(cell => cell === ''));
     
     if (isEmpty && notesStore.activeNote && notesStore.activeNote.content.length > 1) {
-      // Delete entire empty matrix
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
-      notesStore.activeNote.content.splice(lineIndex, 1);
-      
-      // Move cursor to previous line
-      if (lineIndex > 0) {
-        const prevLine = document.value[lineIndex - 1];
-        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
-      } else if (document.value.length > 0) {
-        cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 };
+      if (matrixData.line.type === 'text') {
+        matrixData.line.content = matrixData.line.content.filter(
+          (segment) => !(segment.type === 'matrix' && segment.id === cursor.value.matrixId)
+        );
+        cursor.value = { zone: 'text', lineId: matrixData.line.id, charOffset: 0 };
+        updateDocument();
+      } else {
+        // Delete entire empty matrix line
+        const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+        notesStore.activeNote.content.splice(lineIndex, 1);
+        
+        // Move cursor to previous line
+        if (lineIndex > 0) {
+          const prevLine = document.value[lineIndex - 1];
+          cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+        } else if (document.value.length > 0) {
+          cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 };
+        }
+        updateDocument();
       }
-      updateDocument();
     } else {
       // Just clear current cell
-      line.data[cursor.value.row][cursor.value.col] = '';
+      matrixData.matrix.data[cursor.value.row][cursor.value.col] = '';
       updateDocument();
     }
   }
@@ -750,6 +824,29 @@ function insertMathSymbol(symbolId: string) {
 }
 
 function insertMatrix(rows: number, cols: number) {
+  const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine | MatrixLine | MathExpressionLine | null;
+  if (currentLine?.type === 'text') {
+    const matrixSpan: MatrixSpan = {
+      id: generateId(),
+      type: 'matrix',
+      rows,
+      cols,
+      data: Array(rows).fill(null).map(() => Array(cols).fill(''))
+    };
+    currentLine.content.push(matrixSpan);
+    updateDocument();
+
+    cursor.value = {
+      zone: 'matrix',
+      lineId: currentLine.id,
+      matrixId: matrixSpan.id,
+      row: 0,
+      col: 0
+    };
+    closeCommandPalette();
+    return;
+  }
+
   const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
   const newMatrixLine: MatrixLine = {
     id: generateId(),
@@ -766,6 +863,7 @@ function insertMatrix(rows: number, cols: number) {
     cursor.value = {
       zone: 'matrix',
       lineId: newMatrixLine.id,
+      matrixId: newMatrixLine.id,
       row: 0,
       col: 0
     };
@@ -794,10 +892,11 @@ function blurMathExpression() {
   hiddenInput.value?.focus();
 }
 
-function focusMatrixCell(lineId: string, row: number, col: number) {
+function focusMatrixCell(lineId: string, matrixId: string, row: number, col: number) {
   cursor.value = {
     zone: 'matrix',
     lineId,
+    matrixId,
     row,
     col
   };
@@ -814,12 +913,13 @@ function handleDisplayClick(event: MouseEvent) {
   if (target.classList.contains('matrix-cell-textbook')) {
     const cellEl = target;
     const lineEl = cellEl.closest('[data-line-id]');
+    const matrixId = cellEl.getAttribute('data-matrix-id');
     if (lineEl) {
       const lineId = lineEl.getAttribute('data-line-id');
       const row = parseInt(cellEl.getAttribute('data-row') || '0');
       const col = parseInt(cellEl.getAttribute('data-col') || '0');
-      if (lineId) {
-        focusMatrixCell(lineId, row, col);
+      if (lineId && matrixId) {
+        focusMatrixCell(lineId, matrixId, row, col);
       }
     }
     return;
