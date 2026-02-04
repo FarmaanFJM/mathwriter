@@ -53,7 +53,7 @@ const compiledLatex = computed(() => {
       isActive ? 'slot-active' : '',
       isPlaceholder ? 'slot-placeholder' : ''
     ].filter(Boolean).join(' ')
-    values[slot.name] = `\\class{${slotClasses}}{${slotContent}}`
+    values[slot.name] = `\\htmlClass{${slotClasses}}{${slotContent}}`
   }
 
   return template.value.compile(values)
@@ -136,10 +136,6 @@ function handleSlotClick(event: MouseEvent) {
 }
 
 /* Large operator sizing - 2-2.5x */
-.math-template.is-large-operator :deep(.katex) {
-  font-size: 1.1em;
-}
-
 .math-template.is-large-operator :deep(.katex .op-limits > .vlist-t) {
   font-size: 1em;
 }

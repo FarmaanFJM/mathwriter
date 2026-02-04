@@ -110,21 +110,24 @@
                 </span>
 
                 <span class="matrix-grid" :style="gridStyle(token.segment as MatrixSpan)">
+                <span
+                  v-for="(cell, cellIdx) in flattenMatrix(token.segment as MatrixSpan)"
+                  :key="`${(token.segment as MatrixSpan).id}-${cellIdx}`"
+                  class="matrix-cell-textbook"
+                  :class="{
+                    'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.matrixId === (token.segment as MatrixSpan).id && cursor.row === cell.row && cursor.col === cell.col
+                  }"
+                  :data-row="cell.row"
+                  :data-col="cell.col"
+                  :data-matrix-id="(token.segment as MatrixSpan).id"
+                  @click.stop="focusMatrixCell(line.id, (token.segment as MatrixSpan).id, cell.row, cell.col)"
+                >
                   <span
-                    v-for="(cell, cellIdx) in flattenMatrix(token.segment as MatrixSpan)"
-                    :key="`${(token.segment as MatrixSpan).id}-${cellIdx}`"
-                    class="matrix-cell-textbook"
-                    :class="{
-                      'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.matrixId === (token.segment as MatrixSpan).id && cursor.row === cell.row && cursor.col === cell.col
-                    }"
-                    :data-row="cell.row"
-                    :data-col="cell.col"
-                    :data-matrix-id="(token.segment as MatrixSpan).id"
-                    @click.stop="focusMatrixCell(line.id, (token.segment as MatrixSpan).id, cell.row, cell.col)"
-                  >
-                    {{ cell.value || '_' }}
-                  </span>
+                    class="matrix-cell-render"
+                    :ref="(el) => registerMatrixCellRef(line.id, (token.segment as MatrixSpan).id, cell.row, cell.col, el as HTMLElement)"
+                  ></span>
                 </span>
+              </span>
 
                 <span class="matrix-bracket bracket-right" :style="{ height: bracketHeight(token.segment as MatrixSpan) }">
                   <svg viewBox="0 0 20 100" preserveAspectRatio="none">
@@ -177,7 +180,10 @@
                 :data-matrix-id="line.id"
                 @click.stop="focusMatrixCell(line.id, line.id, cell.row, cell.col)"
               >
-                {{ cell.value || '_' }}
+                <span
+                  class="matrix-cell-render"
+                  :ref="(el) => registerMatrixCellRef(line.id, line.id, cell.row, cell.col, el as HTMLElement)"
+                ></span>
               </div>
             </div>
 
@@ -392,15 +398,26 @@ const selectedCommandIndex = ref(0)
 
 // Symbol rendering refs
 const symbolRefs = ref<Map<string, HTMLElement>>(new Map())
+const matrixCellRefs = ref<Map<string, HTMLElement>>(new Map())
 
 function registerSymbolRef(lineId: string, idx: number, el: HTMLElement | null) {
-  const key = `${lineId}-${idx}`
+  const key = `${lineId}::${idx}`
   if (el) {
     symbolRefs.value.set(key, el)
     // Render the symbol with KaTeX
     renderSymbolAt(lineId, idx, el)
   } else {
     symbolRefs.value.delete(key)
+  }
+}
+
+function registerMatrixCellRef(lineId: string, matrixId: string, row: number, col: number, el: HTMLElement | null) {
+  const key = `${lineId}::${matrixId}::${row}::${col}`
+  if (el) {
+    matrixCellRefs.value.set(key, el)
+    renderMatrixCellAt(lineId, matrixId, row, col, el)
+  } else {
+    matrixCellRefs.value.delete(key)
   }
 }
 
@@ -423,13 +440,48 @@ function renderSymbolAt(lineId: string, idx: number, el: HTMLElement) {
   }
 }
 
+function getMatrixById(lineId: string, matrixId: string): MatrixLine | MatrixSpan | null {
+  const line = notesStore.getLineById(lineId) as TextLine | MatrixLine | null
+  if (!line) return null
+  if (line.type === 'matrix' && line.id === matrixId) {
+    return line
+  }
+  if (line.type === 'text') {
+    const matrix = line.content.find(
+      (segment): segment is MatrixSpan => segment.type === 'matrix' && segment.id === matrixId
+    )
+    return matrix ?? null
+  }
+  return null
+}
+
+function renderMatrixCellAt(lineId: string, matrixId: string, row: number, col: number, el: HTMLElement) {
+  const matrix = getMatrixById(lineId, matrixId)
+  if (!matrix) return
+  const value = matrix.data[row]?.[col] ?? ''
+  const latex = value ? value : '\\phantom{0}'
+  try {
+    el.innerHTML = ''
+    katex.render(latex, el, {
+      displayMode: false,
+      throwOnError: false,
+      trust: true,
+    })
+  } catch {
+    el.textContent = value
+  }
+}
+
 // Re-render symbols when document changes
 watch(document, () => {
   nextTick(() => {
     symbolRefs.value.forEach((el, key) => {
-      const [lineId, idxStr] = key.split('-')
-      const idx = parseInt(idxStr)
-      renderSymbolAt(lineId, idx, el)
+      const [lineId, idxStr] = key.split('::')
+      renderSymbolAt(lineId, Number(idxStr), el)
+    })
+    matrixCellRefs.value.forEach((el, key) => {
+      const [lineId, matrixId, rowStr, colStr] = key.split('::')
+      renderMatrixCellAt(lineId, matrixId, Number(rowStr), Number(colStr), el)
     })
   })
 }, { deep: true })
@@ -546,8 +598,8 @@ function flattenMatrix(line: MatrixLine | MatrixSpan) {
 }
 
 function gridStyle(line: MatrixLine | MatrixSpan) {
-  const cellWidth = line.cols > 3 ? '28px' : '32px'
-  const cellHeight = '24px'
+  const cellWidth = line.cols > 3 ? '24px' : '28px'
+  const cellHeight = '20px'
   return {
     gridTemplateColumns: `repeat(${line.cols}, ${cellWidth})`,
     gridTemplateRows: `repeat(${line.rows}, ${cellHeight})`,
@@ -556,8 +608,8 @@ function gridStyle(line: MatrixLine | MatrixSpan) {
 }
 
 function bracketHeight(line: MatrixLine | MatrixSpan) {
-  const cellHeight = 24
-  const padding = 4
+  const cellHeight = 20
+  const padding = 2
   const totalHeight = (line.rows * cellHeight) + padding
   return `${totalHeight}px`
 }
@@ -2086,7 +2138,7 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
 }
 
 .symbol-render :deep(.katex) {
-  font-size: 1em;
+  font-size: 1.05em;
 }
 
 .empty-line-placeholder {
@@ -2138,9 +2190,9 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
 }
 
 .matrix-cell-textbook {
-  min-width: 32px;
-  min-height: 24px;
-  padding: 2px 4px;
+  min-width: 28px;
+  min-height: 20px;
+  padding: 1px 2px;
   font-family: inherit;
   font-size: 14px;
   text-align: center;
@@ -2158,6 +2210,14 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
   background: transparent;
   border-bottom: 1px solid currentColor;
   font-weight: 500;
+}
+
+.matrix-cell-render {
+  display: inline-block;
+}
+
+.matrix-cell-render :deep(.katex) {
+  font-size: 1em;
 }
 
 .matrix-cell-textbook:hover {
