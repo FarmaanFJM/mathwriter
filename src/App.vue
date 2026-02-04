@@ -5,16 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
-import { useEditorStore } from './stores/editorStore';
 import MathWriter from './components/MathWriter.vue';
-
-const editorStore = useEditorStore();
-
-onMounted(() => {
-  // Initialize theme
-  editorStore.initTheme();
-});
 </script>
 
 <style scoped>

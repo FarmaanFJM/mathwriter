@@ -88,7 +88,7 @@
             <!-- Left bracket -->
             <div class="matrix-bracket bracket-left" :style="{ height: bracketHeight(line) }">
               <svg viewBox="0 0 20 100" preserveAspectRatio="none">
-                <path d="M 15 0 L 5 0 L 5 100 L 15 100" fill="none" stroke="currentColor" stroke-width="2"/>
+                <path d="M 15 0 L 5 0 L 5 100 L 15 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
               </svg>
             </div>
 
@@ -97,7 +97,7 @@
               <div
                 v-for="(cell, cellIdx) in flattenMatrix(line)"
                 :key="`${line.id}-${cellIdx}`"
-                class="matrix-cell"
+                class="matrix-cell-textbook"
                 :class="{ 
                   'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.row === cell.row && cursor.col === cell.col
                 }"
@@ -110,7 +110,7 @@
             <!-- Right bracket -->
             <div class="matrix-bracket bracket-right" :style="{ height: bracketHeight(line) }">
               <svg viewBox="0 0 20 100" preserveAspectRatio="none">
-                <path d="M 5 0 L 15 0 L 15 100 L 5 100" fill="none" stroke="currentColor" stroke-width="2"/>
+                <path d="M 5 0 L 15 0 L 15 100 L 5 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
               </svg>
             </div>
           </div>
@@ -299,15 +299,24 @@ function flattenMatrix(line: MatrixLine) {
 }
 
 function gridStyle(line: MatrixLine) {
+  // Responsive cell sizing based on matrix size
+  const cellWidth = line.cols > 3 ? '38px' : '45px';
+  const cellHeight = '32px';
+  
   return {
-    gridTemplateColumns: `repeat(${line.cols}, minmax(40px, auto))`,
-    gridTemplateRows: `repeat(${line.rows}, minmax(28px, auto))`
+    gridTemplateColumns: `repeat(${line.cols}, ${cellWidth})`,
+    gridTemplateRows: `repeat(${line.rows}, ${cellHeight})`,
+    gap: '0'
   };
 }
 
 function bracketHeight(line: MatrixLine) {
-  const height = line.rows * 28 + 8;
-  return `${height}px`;
+  // Dynamic bracket height based on content
+  const cellHeight = 32;
+  const spacing = 0;
+  const padding = 6;
+  const totalHeight = (line.rows * cellHeight) + padding;
+  return `${totalHeight}px`;
 }
 
 // KEYBOARD HANDLING: All input comes from hidden input
@@ -823,25 +832,27 @@ function generateId(): string {
 /* CRITICAL: Display layer is read-only HTML */
 .editor-display {
   flex: 1;
-  padding: var(--spacing-xl);
+  padding: 32px 40px;
   padding-left: 60px;
   overflow-y: auto;
-  font-family: var(--font-mono);
+  font-family: 'Georgia', 'Times New Roman', serif;
   font-size: 16px;
-  line-height: 1.8;
+  line-height: 1.7;
   color: var(--color-text-primary);
   outline: none;
   user-select: none;
   position: relative;
+  background: var(--color-bg-primary);
 }
 
-/* Container lines */
+/* Container lines - allows text to flow naturally */
 .container-line {
   display: block;
-  min-height: 32px;
+  min-height: auto;
   position: relative;
   word-wrap: break-word;
-  margin: 4px 0;
+  margin: 8px 0;
+  padding: 2px 0;
 }
 
 .container-line::before {
@@ -850,88 +861,109 @@ function generateId(): string {
   left: -48px;
   font-size: 12px;
   color: #999;
+  text-align: right;
+  width: 32px;
 }
 
-/* Text segments flow naturally */
+/* Text segments - flow inline naturally */
 .text-segment {
   display: inline;
+  font-family: inherit;
+  font-size: inherit;
 }
 
 .symbol {
   display: inline;
   color: var(--color-accent);
   font-weight: 600;
-  font-size: 18px;
-  margin: 0 2px;
+  font-size: 20px;
+  margin: 0 3px;
+  vertical-align: -2px;
 }
 
-/* CRITICAL: Matrix is INLINE */
+/* CRITICAL: Matrix is INLINE - flows with text */
 .matrix-inline {
   display: inline-flex;
   align-items: center;
-  gap: 0;
+  gap: 2px;
   vertical-align: middle;
-  margin: 0 4px;
+  margin: 0 6px;
   padding: 0;
   background: transparent;
   border: none;
   border-radius: 0;
+  font-family: inherit;
 }
 
 .matrix-inline.is-editing {
   opacity: 1;
 }
 
-/* Brackets scale */
+/* Brackets - professional looking, scale with matrix */
 .matrix-bracket {
-  width: 16px;
+  width: 14px;
   flex-shrink: 0;
   color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .matrix-bracket svg {
   width: 100%;
   height: 100%;
+  stroke-linecap: round;
 }
 
-/* Matrix grid */
+/* Matrix grid - clean, no visible borders */
 .matrix-grid {
   display: inline-grid;
   grid-auto-flow: row;
   gap: 0;
+  padding: 0;
+  margin: 0;
 }
 
-/* Matrix cells */
-.matrix-cell {
-  min-width: 40px;
-  min-height: 28px;
-  padding: 4px 6px;
-  font-family: var(--font-mono);
-  font-size: 14px;
+/* TEXTBOOK STYLE: Matrix cells with no borders, subtle spacing */
+.matrix-cell-textbook {
+  min-width: 45px;
+  min-height: 32px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 15px;
   text-align: center;
   background: transparent;
-  border: 1px solid #ddd;
+  border: none;
+  border-bottom: 1px solid transparent;
   color: var(--color-text-primary);
   user-select: none;
-  cursor: pointer;
+  cursor: text;
+  outline: none;
+  transition: all 0.15s;
 }
 
-.matrix-cell.is-active {
-  border: 2px solid #2196F3;
-  background: #e3f2fd;
-  z-index: 10;
+/* Active cell gets subtle highlight, not big border */
+.matrix-cell-textbook.is-active {
+  background: rgba(33, 150, 243, 0.08);
+  border-bottom: 2px solid #2196F3;
+  padding: 6px 8px;
+  font-weight: 500;
+}
+
+/* Hover state */
+.matrix-cell-textbook:hover {
+  background: rgba(0, 0, 0, 0.02);
 }
 
 /* Custom caret */
 .custom-caret {
   display: inline-block;
   width: 2px;
-  height: 1.2em;
+  height: 1.3em;
   background: #2196F3;
-  margin-left: 2px;
-  margin-right: -2px;
+  margin: 0 1px;
   animation: blink 1s infinite;
-  vertical-align: text-bottom;
+  vertical-align: -2px;
 }
 
 @keyframes blink {
@@ -957,15 +989,16 @@ function generateId(): string {
 .palette-header {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-bottom: 1px solid #eee;
-  background: #f9f9f9;
+  background: #f5f5f5;
 }
 
 .palette-icon {
   font-size: 16px;
-  color: #999;
+  color: #666;
   margin-right: 8px;
+  font-weight: bold;
 }
 
 .palette-input {
@@ -974,7 +1007,12 @@ function generateId(): string {
   outline: none;
   font-size: 14px;
   background: transparent;
-  font-family: var(--font-mono);
+  font-family: inherit;
+  color: #333;
+}
+
+.palette-input::placeholder {
+  color: #999;
 }
 
 .palette-list {
@@ -986,30 +1024,43 @@ function generateId(): string {
 .palette-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 10px 12px;
   cursor: pointer;
   transition: background 0.2s;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
 }
 
-.palette-item:hover,
+.palette-item:last-child {
+  border-bottom: none;
+}
+
+.palette-item:hover {
+  background: #f0f8ff;
+}
+
 .palette-item.selected {
   background: #e3f2fd;
+  border-left: 3px solid #2196F3;
 }
 
 .cmd-icon {
   font-size: 18px;
   margin-right: 12px;
   min-width: 24px;
+  text-align: center;
 }
 
 .cmd-info {
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .cmd-name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
+  color: #333;
 }
 
 .cmd-desc {
@@ -1081,9 +1132,9 @@ function generateId(): string {
   border-radius: 2px;
 }
 
-/* Line highlighting (optional) */
+/* Line highlighting */
 .container-line.is-active {
-  background: rgba(100, 150, 255, 0.05);
+  background: rgba(100, 150, 255, 0.03);
   padding: 0 4px;
   border-radius: 2px;
 }
