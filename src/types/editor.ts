@@ -9,7 +9,7 @@ export interface LineElement {
 // Text line with inline segments
 export interface TextLine extends LineElement {
   type: 'text'
-  content: (TextSpan | SymbolSpan | MatrixSpan)[]
+  content: (TextSpan | SymbolSpan | MatrixSpan | MathTemplateSpan)[]
 }
 
 export interface TextSpan {
@@ -19,7 +19,7 @@ export interface TextSpan {
 
 export interface SymbolSpan {
   type: 'symbol'
-  value: 'sigma' | 'integral' | 'sqrt' | 'pi' | 'theta' | 'alpha' | 'beta' | 'gamma' | 'delta' | 'lambda' | 'plus' | 'minus' | 'times' | 'divide' | 'equals'
+  value: string
   display: string
   latex?: string
 }
@@ -30,6 +30,14 @@ export interface MatrixSpan {
   rows: number
   cols: number
   data: string[][]
+}
+
+// NEW: Inline math template with editable slots
+export interface MathTemplateSpan {
+  id: string
+  type: 'mathTemplate'
+  templateId: string           // reference to mathTemplates registry
+  slotValues: Record<string, string>  // current values for each slot
 }
 
 // Matrix line
@@ -51,9 +59,10 @@ export interface MathExpressionLine extends LineElement {
 export type DocumentContent = (TextLine | MatrixLine | MathExpressionLine)[]
 
 // Cursor position (zone-based)
-export type CursorPosition = 
+export type CursorPosition =
   | { zone: 'text', lineId: string, charOffset: number }
   | { zone: 'matrix', lineId: string, matrixId: string, row: number, col: number }
+  | { zone: 'mathTemplate', lineId: string, templateSpanId: string, slotName: string, slotOffset: number }
 
 // Note structure
 export interface Note {
@@ -69,6 +78,6 @@ export interface Command {
   id: string
   name: string
   description: string
-  category: 'insert' | 'symbol' | 'operator' | 'math' | 'matrix'
+  category: 'insert' | 'symbol' | 'operator' | 'math' | 'matrix' | 'template' | 'function' | 'decoration'
   icon?: string
 }

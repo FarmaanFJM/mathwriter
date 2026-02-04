@@ -6,8 +6,8 @@
         <h3>Notes</h3>
         <div class="header-actions">
           <button class="btn-theme-toggle" @click="toggleTheme" :title="`Switch to ${editorStore.theme === 'light' ? 'dark' : 'light'} mode`">
-            <span v-if="editorStore.theme === 'light'">🌙</span>
-            <span v-else>☀️</span>
+            <span v-if="editorStore.theme === 'light'" class="theme-icon">&#9790;</span>
+            <span v-else class="theme-icon">&#9788;</span>
           </button>
           <button class="btn-new-note" @click="createNewNote" title="New Note">+</button>
         </div>
@@ -48,16 +48,19 @@
         @input="handleInput"
         @blur="handleBlur"
         @focus="handleFocus"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
       />
 
       <!-- DISPLAY LAYER: Read-only rendered content -->
-      <div 
+      <div
         class="editor-display"
         @click="handleDisplayClick"
-        @mousemove="handleMouseMove"
       >
         <!-- Render document as pure HTML -->
-        <div 
+        <div
           v-for="(line, lineIndex) in document"
           :key="line.id"
           class="container-line"
@@ -68,52 +71,63 @@
         >
           <!-- Text line -->
           <template v-if="line.type === 'text'">
-            <span 
-              v-for="(segment, idx) in line.content"
-              :key="`${line.id}-${idx}`"
-              class="text-segment"
-            >
-              <template v-if="segment.type === 'text'">{{ segment.value }}</template>
-              <span v-else-if="segment.type === 'symbol'" class="symbol">{{ segment.display }}</span>
-              <span v-else class="matrix-inline">
-                <span class="matrix-bracket bracket-left" :style="{ height: bracketHeight(segment) }">
+            <template v-for="(segment, idx) in (line as TextLine).content" :key="`${line.id}-${idx}`">
+              <!-- Plain text segment -->
+              <span v-if="segment.type === 'text'" class="text-segment">{{ segment.value }}</span>
+
+              <!-- Symbol segment (rendered with KaTeX inline) -->
+              <span v-else-if="segment.type === 'symbol'" class="symbol-inline" :data-latex="(segment as SymbolSpan).latex">
+                <span class="symbol-render" :ref="(el) => registerSymbolRef(line.id, idx, el as HTMLElement)"></span>
+              </span>
+
+              <!-- Math template segment (inline, with editable slots) -->
+              <MathTemplate
+                v-else-if="segment.type === 'mathTemplate'"
+                :span="(segment as MathTemplateSpan)"
+                :active-slot-name="getActiveSlotName(line.id, (segment as MathTemplateSpan).id)"
+                @focus-slot="(spanId, slotName) => focusMathTemplateSlot(line.id, spanId, slotName)"
+              />
+
+              <!-- Inline matrix segment -->
+              <span v-else-if="segment.type === 'matrix'" class="matrix-inline">
+                <span class="matrix-bracket bracket-left" :style="{ height: bracketHeight(segment as MatrixSpan) }">
                   <svg viewBox="0 0 20 100" preserveAspectRatio="none">
                     <path d="M 15 0 L 5 0 L 5 100 L 15 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
                   </svg>
                 </span>
 
-                <span class="matrix-grid" :style="gridStyle(segment)">
+                <span class="matrix-grid" :style="gridStyle(segment as MatrixSpan)">
                   <span
-                    v-for="(cell, cellIdx) in flattenMatrix(segment)"
-                    :key="`${segment.id}-${cellIdx}`"
+                    v-for="(cell, cellIdx) in flattenMatrix(segment as MatrixSpan)"
+                    :key="`${(segment as MatrixSpan).id}-${cellIdx}`"
                     class="matrix-cell-textbook"
                     :class="{
-                      'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.matrixId === segment.id && cursor.row === cell.row && cursor.col === cell.col
+                      'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.matrixId === (segment as MatrixSpan).id && cursor.row === cell.row && cursor.col === cell.col
                     }"
                     :data-row="cell.row"
                     :data-col="cell.col"
-                    :data-matrix-id="segment.id"
-                    @click.stop="focusMatrixCell(line.id, segment.id, cell.row, cell.col)"
+                    :data-matrix-id="(segment as MatrixSpan).id"
+                    @click.stop="focusMatrixCell(line.id, (segment as MatrixSpan).id, cell.row, cell.col)"
                   >
                     {{ cell.value || '_' }}
                   </span>
                 </span>
 
-                <span class="matrix-bracket bracket-right" :style="{ height: bracketHeight(segment) }">
+                <span class="matrix-bracket bracket-right" :style="{ height: bracketHeight(segment as MatrixSpan) }">
                   <svg viewBox="0 0 20 100" preserveAspectRatio="none">
                     <path d="M 5 0 L 15 0 L 15 100 L 5 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
                   </svg>
                 </span>
               </span>
-            </span>
+            </template>
 
             <span
-              v-if="line.content.length === 1 && line.content[0].type === 'text' && line.content[0].value === ''"
+              v-if="(line as TextLine).content.length === 1 && (line as TextLine).content[0].type === 'text' && ((line as TextLine).content[0] as TextSpan).value === ''"
               class="empty-line-placeholder"
             ></span>
-            
+
             <!-- Custom caret in text -->
-            <span 
+            <span
               v-if="cursor.zone === 'text' && cursor.lineId === line.id"
               class="custom-caret"
             ></span>
@@ -129,27 +143,25 @@
             />
           </template>
 
-          <!-- Matrix line (inline, not a separate container) -->
-          <div 
+          <!-- Matrix line -->
+          <div
             v-else-if="line.type === 'matrix'"
             class="matrix-inline"
             :class="{ 'is-editing': cursor.zone === 'matrix' && cursor.lineId === line.id }"
             @click.stop="focusMatrixCell(line.id, line.id, 0, 0)"
           >
-            <!-- Left bracket -->
-            <div class="matrix-bracket bracket-left" :style="{ height: bracketHeight(line) }">
+            <div class="matrix-bracket bracket-left" :style="{ height: bracketHeight(line as MatrixLine) }">
               <svg viewBox="0 0 20 100" preserveAspectRatio="none">
                 <path d="M 15 0 L 5 0 L 5 100 L 15 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
               </svg>
             </div>
 
-            <!-- Grid -->
-            <div class="matrix-grid" :style="gridStyle(line)">
+            <div class="matrix-grid" :style="gridStyle(line as MatrixLine)">
               <div
-                v-for="(cell, cellIdx) in flattenMatrix(line)"
+                v-for="(cell, cellIdx) in flattenMatrix(line as MatrixLine)"
                 :key="`${line.id}-${cellIdx}`"
                 class="matrix-cell-textbook"
-                :class="{ 
+                :class="{
                   'is-active': cursor.zone === 'matrix' && cursor.lineId === line.id && cursor.matrixId === line.id && cursor.row === cell.row && cursor.col === cell.col
                 }"
                 :data-row="cell.row"
@@ -161,8 +173,7 @@
               </div>
             </div>
 
-            <!-- Right bracket -->
-            <div class="matrix-bracket bracket-right" :style="{ height: bracketHeight(line) }">
+            <div class="matrix-bracket bracket-right" :style="{ height: bracketHeight(line as MatrixLine) }">
               <svg viewBox="0 0 20 100" preserveAspectRatio="none">
                 <path d="M 5 0 L 15 0 L 15 100 L 5 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
               </svg>
@@ -172,7 +183,7 @@
       </div>
 
       <!-- Command palette inline -->
-      <div 
+      <div
         v-if="showCommandPalette"
         class="command-palette"
         :style="palettePosition"
@@ -183,7 +194,7 @@
             v-model="commandQuery"
             type="text"
             class="palette-input"
-            placeholder="matrix, sigma, sqrt..."
+            placeholder="summation, fraction, integral, sqrt..."
             @keydown="handlePaletteKeydown"
             @click.stop
             ref="paletteInputRef"
@@ -202,6 +213,7 @@
               <span class="cmd-name">{{ cmd.name }}</span>
               <span class="cmd-desc">{{ cmd.description }}</span>
             </div>
+            <span v-if="cmd.category === 'template'" class="cmd-badge">template</span>
           </div>
         </div>
       </div>
@@ -210,54 +222,114 @@
     <!-- RIGHT SIDEBAR: Keypad -->
     <div class="sidebar-right">
       <div class="keypad">
+        <!-- Math Templates section (prominent) -->
+        <div class="keypad-section">
+          <h4>Equations</h4>
+          <div class="keypad-grid keypad-grid-2col">
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('summation')" title="Summation">
+              <span class="btn-symbol">&sum;</span>
+              <span class="btn-label">Sum</span>
+            </button>
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('product')" title="Product">
+              <span class="btn-symbol">&prod;</span>
+              <span class="btn-label">Product</span>
+            </button>
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('integral')" title="Integral">
+              <span class="btn-symbol">&int;</span>
+              <span class="btn-label">Integral</span>
+            </button>
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('limit')" title="Limit">
+              <span class="btn-symbol">lim</span>
+              <span class="btn-label">Limit</span>
+            </button>
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('fraction')" title="Fraction">
+              <span class="btn-symbol">&frasl;</span>
+              <span class="btn-label">Fraction</span>
+            </button>
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('sqrt')" title="Square Root">
+              <span class="btn-symbol">&radic;</span>
+              <span class="btn-label">Root</span>
+            </button>
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('power')" title="Exponent">
+              <span class="btn-symbol">x<sup>n</sup></span>
+              <span class="btn-label">Power</span>
+            </button>
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('subscriptExpr')" title="Subscript">
+              <span class="btn-symbol">x<sub>i</sub></span>
+              <span class="btn-label">Subscript</span>
+            </button>
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('derivative')" title="Derivative">
+              <span class="btn-symbol">d/dx</span>
+              <span class="btn-label">Derivative</span>
+            </button>
+            <button class="keypad-btn keypad-btn-template" @click="insertTemplate('abs')" title="Absolute Value">
+              <span class="btn-symbol">|x|</span>
+              <span class="btn-label">Abs</span>
+            </button>
+          </div>
+        </div>
+
         <div class="keypad-section">
           <h4>Greek Letters</h4>
           <div class="keypad-grid">
-            <button class="keypad-btn" @click="insertMathSymbol('alpha')" title="α">α</button>
-            <button class="keypad-btn" @click="insertMathSymbol('beta')" title="β">β</button>
-            <button class="keypad-btn" @click="insertMathSymbol('gamma')" title="γ">γ</button>
-            <button class="keypad-btn" @click="insertMathSymbol('delta')" title="δ">δ</button>
-            <button class="keypad-btn" @click="insertMathSymbol('theta')" title="θ">θ</button>
-            <button class="keypad-btn" @click="insertMathSymbol('lambda')" title="λ">λ</button>
-            <button class="keypad-btn" @click="insertMathSymbol('sigma')" title="Σ">Σ</button>
-            <button class="keypad-btn" @click="insertMathSymbol('pi')" title="π">π</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('alpha')" title="alpha">&alpha;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('beta')" title="beta">&beta;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('gamma')" title="gamma">&gamma;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('delta')" title="delta">&delta;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('epsilon')" title="epsilon">&epsilon;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('theta')" title="theta">&theta;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('lambda')" title="lambda">&lambda;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('mu')" title="mu">&mu;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('pi')" title="pi">&pi;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('sigma_lower')" title="sigma">&sigma;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('phi')" title="phi">&phi;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('omega')" title="omega">&omega;</button>
           </div>
         </div>
 
         <div class="keypad-section">
           <h4>Operators</h4>
           <div class="keypad-grid">
-            <button class="keypad-btn" @click="insertMathSymbol('plus')" title="+">+</button>
-            <button class="keypad-btn" @click="insertMathSymbol('minus')" title="−">−</button>
-            <button class="keypad-btn" @click="insertMathSymbol('times')" title="×">×</button>
-            <button class="keypad-btn" @click="insertMathSymbol('divide')" title="÷">÷</button>
-            <button class="keypad-btn" @click="insertMathSymbol('equals')" title="=">=</button>
-            <button class="keypad-btn" @click="insertMathSymbol('approx')" title="≈">≈</button>
-            <button class="keypad-btn" @click="insertMathSymbol('leq')" title="≤">≤</button>
-            <button class="keypad-btn" @click="insertMathSymbol('geq')" title="≥">≥</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('plus')" title="+">+</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('minus')" title="minus">&minus;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('times')" title="times">&times;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('divide')" title="divide">&divide;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('equals')" title="=">=</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('neq')" title="not equal">&ne;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('approx')" title="approx">&asymp;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('leq')" title="less equal">&le;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('geq')" title="greater equal">&ge;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('pm')" title="plus-minus">&plusmn;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('infinity')" title="infinity">&infin;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('cdot')" title="dot">&middot;</button>
           </div>
         </div>
 
         <div class="keypad-section">
-          <h4>Math Functions</h4>
+          <h4>More Operators</h4>
           <div class="keypad-grid">
-            <button class="keypad-btn" @click="insertMathSymbol('sqrt')" title="√">√</button>
-            <button class="keypad-btn" @click="insertMathSymbol('integral')" title="∫">∫</button>
-            <button class="keypad-btn" @click="insertMathSymbol('sum')" title="∑">∑</button>
-            <button class="keypad-btn" @click="insertMathSymbol('fraction')" title="a/b">a/b</button>
-            <button class="keypad-btn" @click="insertMathSymbol('power')" title="x^n">x^n</button>
-            <button class="keypad-btn" @click="insertMathSymbol('subscript')" title="x_n">x_n</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('rightarrow')" title="right arrow">&rarr;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('Rightarrow')" title="implies">&rArr;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('forall')" title="for all">&forall;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('exists')" title="exists">&exist;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('in_set')" title="in">&isin;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('subset')" title="subset">&sub;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('cup')" title="union">&cup;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('cap')" title="intersection">&cap;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('nabla')" title="nabla">&nabla;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('partial')" title="partial">&part;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('dots')" title="dots">&ctdot;</button>
+            <button class="keypad-btn" @click="insertInlineSymbol('leftrightarrow')" title="iff">&harr;</button>
           </div>
         </div>
 
         <div class="keypad-section">
           <h4>Matrices</h4>
           <div class="keypad-grid">
-            <button class="keypad-btn" @click="insertMatrix(2, 2)">2×2</button>
-            <button class="keypad-btn" @click="insertMatrix(2, 3)">2×3</button>
-            <button class="keypad-btn" @click="insertMatrix(3, 2)">3×2</button>
-            <button class="keypad-btn" @click="insertMatrix(3, 3)">3×3</button>
-            <button class="keypad-btn" @click="insertMatrix(4, 4)">4×4</button>
+            <button class="keypad-btn" @click="insertMatrix(2, 2)">2&times;2</button>
+            <button class="keypad-btn" @click="insertMatrix(2, 3)">2&times;3</button>
+            <button class="keypad-btn" @click="insertMatrix(3, 3)">3&times;3</button>
+            <button class="keypad-btn" @click="insertMatrix(4, 4)">4&times;4</button>
           </div>
         </div>
 
@@ -265,9 +337,11 @@
           <h4>Keyboard Shortcuts</h4>
           <div class="shortcuts-list">
             <div class="shortcut-item"><kbd>/</kbd> <span>Commands</span></div>
-            <div class="shortcut-item"><kbd>↑↓←→</kbd> <span>Navigate</span></div>
-            <div class="shortcut-item"><kbd>Esc</kbd> <span>Exit matrix</span></div>
+            <div class="shortcut-item"><kbd>Tab</kbd> <span>Next slot</span></div>
+            <div class="shortcut-item"><kbd>Shift+Tab</kbd> <span>Previous slot</span></div>
+            <div class="shortcut-item"><kbd>Esc</kbd> <span>Finish editing</span></div>
             <div class="shortcut-item"><kbd>Enter</kbd> <span>New line</span></div>
+            <div class="shortcut-item"><kbd>&uarr;&darr;&larr;&rarr;</kbd> <span>Navigate</span></div>
           </div>
         </div>
       </div>
@@ -276,254 +350,420 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue';
-import { useNotesStore } from '../stores/notesStore';
-import { useEditorStore } from '../stores/editorStore';
-import MathExpression from './MathExpression.vue';
-import { createMathExpression, symbolToLatex } from '../utils/latexMapping';
-import type { CursorPosition, TextLine, MatrixLine, MatrixSpan, MathExpressionLine, Command } from '../types/editor';
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { useNotesStore } from '../stores/notesStore'
+import { useEditorStore } from '../stores/editorStore'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+import MathExpression from './MathExpression.vue'
+import MathTemplate from './MathTemplate.vue'
+import { mathTemplates, inlineSymbols } from '../utils/mathTemplates'
+import type {
+  CursorPosition, TextLine, TextSpan, SymbolSpan, MatrixLine,
+  MatrixSpan, MathExpressionLine, MathTemplateSpan, Command
+} from '../types/editor'
 
-const notesStore = useNotesStore();
-const editorStore = useEditorStore();
-const hiddenInput = ref<HTMLInputElement | null>(null);
-const paletteInputRef = ref<HTMLInputElement | null>(null);
+const notesStore = useNotesStore()
+const editorStore = useEditorStore()
+const hiddenInput = ref<HTMLInputElement | null>(null)
+const paletteInputRef = ref<HTMLInputElement | null>(null)
 
 // STATE: Document and cursor
-const document = computed(() => notesStore.document);
+const document = computed(() => notesStore.document)
 
 const cursor = ref<CursorPosition>({
   zone: 'text',
   lineId: '',
   charOffset: 0
-});
+})
 
 // UI state
-const commandQuery = ref('');
-const showCommandPalette = ref(false);
-const selectedCommandIndex = ref(0);
+const commandQuery = ref('')
+const showCommandPalette = ref(false)
+const selectedCommandIndex = ref(0)
+
+// Symbol rendering refs
+const symbolRefs = ref<Map<string, HTMLElement>>(new Map())
+
+function registerSymbolRef(lineId: string, idx: number, el: HTMLElement | null) {
+  const key = `${lineId}-${idx}`
+  if (el) {
+    symbolRefs.value.set(key, el)
+    // Render the symbol with KaTeX
+    renderSymbolAt(lineId, idx, el)
+  } else {
+    symbolRefs.value.delete(key)
+  }
+}
+
+function renderSymbolAt(lineId: string, idx: number, el: HTMLElement) {
+  const line = notesStore.getLineById(lineId) as TextLine | null
+  if (!line || line.type !== 'text') return
+  const segment = line.content[idx]
+  if (!segment || segment.type !== 'symbol') return
+  const latex = (segment as SymbolSpan).latex || ''
+  if (!latex) return
+  try {
+    el.innerHTML = ''
+    katex.render(latex, el, {
+      displayMode: false,
+      throwOnError: false,
+      trust: true,
+    })
+  } catch {
+    el.textContent = (segment as SymbolSpan).display
+  }
+}
+
+// Re-render symbols when document changes
+watch(document, () => {
+  nextTick(() => {
+    symbolRefs.value.forEach((el, key) => {
+      const [lineId, idxStr] = key.split('-')
+      const idx = parseInt(idxStr)
+      renderSymbolAt(lineId, idx, el)
+    })
+  })
+}, { deep: true })
 
 // Initialize
 onMounted(() => {
-  editorStore.initTheme();
-  notesStore.init();
+  editorStore.initTheme()
+  notesStore.init()
   if (document.value.length > 0) {
     cursor.value = {
       zone: 'text',
       lineId: document.value[0].id,
       charOffset: 0
-    };
+    }
   }
   nextTick(() => {
-    hiddenInput.value?.focus();
-  });
-});
+    hiddenInput.value?.focus()
+  })
+})
 
-// Commands
+// Commands - expanded with templates
 const commands: Command[] = [
-  { id: 'sigma', name: 'sigma', description: 'Σ uppercase sigma', category: 'symbol', icon: 'Σ' },
-  { id: 'sum', name: 'sum', description: '∑ summation', category: 'symbol', icon: '∑' },
-  { id: 'integral', name: 'integral', description: '∫ integral', category: 'symbol', icon: '∫' },
-  { id: 'pi', name: 'pi', description: 'π pi', category: 'symbol', icon: 'π' },
-  { id: 'alpha', name: 'alpha', description: 'α alpha', category: 'symbol', icon: 'α' },
-  { id: 'beta', name: 'beta', description: 'β beta', category: 'symbol', icon: 'β' },
-  { id: 'theta', name: 'theta', description: 'θ theta', category: 'symbol', icon: 'θ' },
-  { id: 'lambda', name: 'lambda', description: 'λ lambda', category: 'symbol', icon: 'λ' },
+  // Templates (primary)
+  { id: 'tpl-summation', name: 'Summation', description: 'Sum with bounds', category: 'template', icon: '\u2211' },
+  { id: 'tpl-product', name: 'Product', description: 'Product with bounds', category: 'template', icon: '\u220F' },
+  { id: 'tpl-integral', name: 'Integral', description: 'Integral with bounds', category: 'template', icon: '\u222B' },
+  { id: 'tpl-limit', name: 'Limit', description: 'Limit expression', category: 'template', icon: 'lim' },
+  { id: 'tpl-fraction', name: 'Fraction', description: 'a/b fraction', category: 'template', icon: '\u2044' },
+  { id: 'tpl-sqrt', name: 'Square Root', description: 'Square root', category: 'template', icon: '\u221A' },
+  { id: 'tpl-nthroot', name: 'Nth Root', description: 'nth root', category: 'template', icon: '\u221B' },
+  { id: 'tpl-power', name: 'Exponent', description: 'x to the n', category: 'template', icon: 'x\u207F' },
+  { id: 'tpl-subscriptExpr', name: 'Subscript', description: 'x sub i', category: 'template', icon: 'x\u1D62' },
+  { id: 'tpl-superSub', name: 'Super & Subscript', description: 'x sub i to the n', category: 'template', icon: 'x\u1D62\u207F' },
+  { id: 'tpl-derivative', name: 'Derivative', description: 'd/dx derivative', category: 'template', icon: 'd/dx' },
+  { id: 'tpl-partialDerivative', name: 'Partial Derivative', description: 'partial derivative', category: 'template', icon: '\u2202/\u2202x' },
+  { id: 'tpl-union', name: 'Union', description: 'Set union with bounds', category: 'template', icon: '\u22C3' },
+  { id: 'tpl-intersection', name: 'Intersection', description: 'Set intersection with bounds', category: 'template', icon: '\u22C2' },
+  { id: 'tpl-hat', name: 'Hat', description: 'Hat accent', category: 'template', icon: '\u0302' },
+  { id: 'tpl-bar', name: 'Overline', description: 'Bar/overline', category: 'template', icon: '\u0305' },
+  { id: 'tpl-vec', name: 'Vector', description: 'Vector arrow', category: 'template', icon: '\u20D7' },
+  { id: 'tpl-abs', name: 'Absolute Value', description: '|x| absolute value', category: 'template', icon: '|x|' },
+  { id: 'tpl-paren', name: 'Parentheses', description: 'Auto-sizing parens', category: 'template', icon: '(x)' },
+  { id: 'tpl-bracket', name: 'Brackets', description: 'Auto-sizing brackets', category: 'template', icon: '[x]' },
+  { id: 'tpl-binom', name: 'Binomial', description: 'Binomial coefficient', category: 'template', icon: 'C(n,k)' },
 
-  { id: 'plus', name: 'plus', description: '+ addition', category: 'operator', icon: '+' },
-  { id: 'minus', name: 'minus', description: '− subtraction', category: 'operator', icon: '−' },
-  { id: 'times', name: 'times', description: '× multiplication', category: 'operator', icon: '×' },
-  { id: 'divide', name: 'divide', description: '÷ division', category: 'operator', icon: '÷' },
-  { id: 'equals', name: 'equals', description: '= equals', category: 'operator', icon: '=' },
-  { id: 'approx', name: 'approx', description: '≈ approximately equal', category: 'operator', icon: '≈' },
-  { id: 'leq', name: 'less-equal', description: '≤ less than or equal', category: 'operator', icon: '≤' },
-  { id: 'geq', name: 'greater-equal', description: '≥ greater than or equal', category: 'operator', icon: '≥' },
+  // Greek letters
+  { id: 'sym-alpha', name: 'alpha', description: '\u03B1 alpha', category: 'symbol', icon: '\u03B1' },
+  { id: 'sym-beta', name: 'beta', description: '\u03B2 beta', category: 'symbol', icon: '\u03B2' },
+  { id: 'sym-gamma', name: 'gamma', description: '\u03B3 gamma', category: 'symbol', icon: '\u03B3' },
+  { id: 'sym-delta', name: 'delta', description: '\u03B4 delta', category: 'symbol', icon: '\u03B4' },
+  { id: 'sym-theta', name: 'theta', description: '\u03B8 theta', category: 'symbol', icon: '\u03B8' },
+  { id: 'sym-lambda', name: 'lambda', description: '\u03BB lambda', category: 'symbol', icon: '\u03BB' },
+  { id: 'sym-pi', name: 'pi', description: '\u03C0 pi', category: 'symbol', icon: '\u03C0' },
+  { id: 'sym-sigma_lower', name: 'sigma', description: '\u03C3 sigma', category: 'symbol', icon: '\u03C3' },
+  { id: 'sym-phi', name: 'phi', description: '\u03C6 phi', category: 'symbol', icon: '\u03C6' },
+  { id: 'sym-omega', name: 'omega', description: '\u03C9 omega', category: 'symbol', icon: '\u03C9' },
 
-  { id: 'fraction', name: 'fraction', description: 'a/b fraction', category: 'math', icon: '⁄' },
-  { id: 'sqrt', name: 'sqrt', description: '√ square root', category: 'math', icon: '√' },
-  { id: 'power', name: 'power', description: 'x^n exponent', category: 'math', icon: '^' },
-  { id: 'subscript', name: 'subscript', description: 'x_n subscript', category: 'math', icon: '_' },
+  // Operators
+  { id: 'sym-plus', name: 'plus', description: '+ addition', category: 'operator', icon: '+' },
+  { id: 'sym-minus', name: 'minus', description: '\u2212 subtraction', category: 'operator', icon: '\u2212' },
+  { id: 'sym-times', name: 'times', description: '\u00D7 multiplication', category: 'operator', icon: '\u00D7' },
+  { id: 'sym-divide', name: 'divide', description: '\u00F7 division', category: 'operator', icon: '\u00F7' },
+  { id: 'sym-equals', name: 'equals', description: '= equals', category: 'operator', icon: '=' },
+  { id: 'sym-neq', name: 'not-equal', description: '\u2260 not equal', category: 'operator', icon: '\u2260' },
+  { id: 'sym-approx', name: 'approx', description: '\u2248 approximately', category: 'operator', icon: '\u2248' },
+  { id: 'sym-leq', name: 'less-equal', description: '\u2264 less or equal', category: 'operator', icon: '\u2264' },
+  { id: 'sym-geq', name: 'greater-equal', description: '\u2265 greater or equal', category: 'operator', icon: '\u2265' },
+  { id: 'sym-infinity', name: 'infinity', description: '\u221E infinity', category: 'operator', icon: '\u221E' },
+  { id: 'sym-rightarrow', name: 'right arrow', description: '\u2192 right arrow', category: 'operator', icon: '\u2192' },
+  { id: 'sym-Rightarrow', name: 'implies', description: '\u21D2 implies', category: 'operator', icon: '\u21D2' },
+  { id: 'sym-forall', name: 'for all', description: '\u2200 for all', category: 'operator', icon: '\u2200' },
+  { id: 'sym-exists', name: 'exists', description: '\u2203 exists', category: 'operator', icon: '\u2203' },
+  { id: 'sym-in_set', name: 'in', description: '\u2208 element of', category: 'operator', icon: '\u2208' },
+  { id: 'sym-nabla', name: 'nabla', description: '\u2207 nabla/del', category: 'operator', icon: '\u2207' },
+  { id: 'sym-partial', name: 'partial', description: '\u2202 partial', category: 'operator', icon: '\u2202' },
 
-  { id: 'matrix-2x2', name: 'matrix 2×2', description: '2×2 matrix', category: 'matrix', icon: '⊞' },
-  { id: 'matrix-2x3', name: 'matrix 2×3', description: '2×3 matrix', category: 'matrix', icon: '⊞' },
-  { id: 'matrix-3x2', name: 'matrix 3×2', description: '3×2 matrix', category: 'matrix', icon: '⊞' },
-  { id: 'matrix-3x3', name: 'matrix 3×3', description: '3×3 matrix', category: 'matrix', icon: '⊞' },
-  { id: 'matrix-4x4', name: 'matrix 4×4', description: '4×4 matrix', category: 'matrix', icon: '⊞' },
-];
+  // Matrices
+  { id: 'matrix-2x2', name: 'matrix 2\u00D72', description: '2\u00D72 matrix', category: 'matrix', icon: '\u229E' },
+  { id: 'matrix-2x3', name: 'matrix 2\u00D73', description: '2\u00D73 matrix', category: 'matrix', icon: '\u229E' },
+  { id: 'matrix-3x3', name: 'matrix 3\u00D73', description: '3\u00D73 matrix', category: 'matrix', icon: '\u229E' },
+  { id: 'matrix-4x4', name: 'matrix 4\u00D74', description: '4\u00D74 matrix', category: 'matrix', icon: '\u229E' },
+]
 
 const filteredCommands = computed(() => {
-  if (!commandQuery.value) return commands;
-  const query = commandQuery.value.toLowerCase();
+  if (!commandQuery.value) return commands
+  const query = commandQuery.value.toLowerCase()
   return commands.filter(cmd =>
     cmd.name.toLowerCase().includes(query) ||
     cmd.description.toLowerCase().includes(query)
-  );
-});
+  )
+})
 
 // Palette position
 const palettePosition = computed(() => {
-  const lineEl = window.document.querySelector(`[data-line-id="${cursor.value.lineId}"]`);
-  if (!lineEl) return {};
-  const rect = lineEl.getBoundingClientRect();
+  const lineEl = window.document.querySelector(`[data-line-id="${cursor.value.lineId}"]`)
+  if (!lineEl) return {}
+  const rect = lineEl.getBoundingClientRect()
   return {
     position: 'fixed' as const,
     top: `${rect.bottom + 4}px`,
     left: `${rect.left}px`
-  };
-});
+  }
+})
 
 // Helper functions
 function flattenMatrix(line: MatrixLine | MatrixSpan) {
-  const cells: Array<{ row: number, col: number, value: string }> = [];
+  const cells: Array<{ row: number, col: number, value: string }> = []
   for (let r = 0; r < line.rows; r++) {
     for (let c = 0; c < line.cols; c++) {
-      cells.push({ row: r, col: c, value: line.data[r][c] });
+      cells.push({ row: r, col: c, value: line.data[r][c] })
     }
   }
-  return cells;
+  return cells
 }
 
 function gridStyle(line: MatrixLine | MatrixSpan) {
-  // Responsive cell sizing based on matrix size
-  const cellWidth = line.cols > 3 ? '38px' : '45px';
-  const cellHeight = '32px';
-  
+  const cellWidth = line.cols > 3 ? '38px' : '45px'
+  const cellHeight = '32px'
   return {
     gridTemplateColumns: `repeat(${line.cols}, ${cellWidth})`,
     gridTemplateRows: `repeat(${line.rows}, ${cellHeight})`,
     gap: '0'
-  };
+  }
 }
 
 function bracketHeight(line: MatrixLine | MatrixSpan) {
-  // Dynamic bracket height based on content
-  const cellHeight = 32;
-  const spacing = 0;
-  const padding = 6;
-  const totalHeight = (line.rows * cellHeight) + padding;
-  return `${totalHeight}px`;
+  const cellHeight = 32
+  const padding = 6
+  const totalHeight = (line.rows * cellHeight) + padding
+  return `${totalHeight}px`
 }
 
 function getMatrixByCursor() {
-  if (cursor.value.zone !== 'matrix') return null;
-  const line = notesStore.getLineById(cursor.value.lineId) as TextLine | MatrixLine | null;
-  if (!line) return null;
+  if (cursor.value.zone !== 'matrix') return null
+  const cur = cursor.value as { zone: 'matrix', lineId: string, matrixId: string, row: number, col: number }
+  const line = notesStore.getLineById(cur.lineId) as TextLine | MatrixLine | null
+  if (!line) return null
 
   if (line.type === 'matrix') {
-    return { line, matrix: line };
+    return { line, matrix: line }
   }
 
   if (line.type === 'text') {
     const matrix = line.content.find(
-      (segment): segment is MatrixSpan => segment.type === 'matrix' && segment.id === cursor.value.matrixId
-    );
+      (segment): segment is MatrixSpan => segment.type === 'matrix' && segment.id === cur.matrixId
+    )
     if (matrix) {
-      return { line, matrix };
+      return { line, matrix }
     }
   }
 
-  return null;
+  return null
+}
+
+// Get the active slot name for a math template (used by MathTemplate component)
+function getActiveSlotName(lineId: string, spanId: string): string | null {
+  if (cursor.value.zone !== 'mathTemplate') return null
+  const cur = cursor.value as { zone: 'mathTemplate', lineId: string, templateSpanId: string, slotName: string, slotOffset: number }
+  if (cur.lineId !== lineId) return null
+  if (cur.templateSpanId !== spanId) return null
+  return cur.slotName
+}
+
+// Get math template span by cursor
+function getTemplateByCursor(): { line: TextLine, span: MathTemplateSpan, spanIndex: number } | null {
+  if (cursor.value.zone !== 'mathTemplate') return null
+  const cur = cursor.value as { zone: 'mathTemplate', lineId: string, templateSpanId: string, slotName: string, slotOffset: number }
+  const line = notesStore.getLineById(cur.lineId) as TextLine | null
+  if (!line || line.type !== 'text') return null
+  const spanIndex = line.content.findIndex(
+    (seg): seg is MathTemplateSpan => seg.type === 'mathTemplate' && seg.id === cur.templateSpanId
+  )
+  if (spanIndex === -1) return null
+  return { line, span: line.content[spanIndex] as MathTemplateSpan, spanIndex }
 }
 
 // KEYBOARD HANDLING: All input comes from hidden input
 function handleKeydown(event: KeyboardEvent) {
   // Command palette navigation
   if (showCommandPalette.value) {
-    return; // Let palette input handle it
+    return // Let palette input handle it
   }
 
-  // Special keys that don't produce characters
+  // Tab: navigate between slots in math template
+  if (event.key === 'Tab') {
+    if (cursor.value.zone === 'mathTemplate') {
+      event.preventDefault()
+      if (event.shiftKey) {
+        navigateSlotPrev()
+      } else {
+        navigateSlotNext()
+      }
+      return
+    }
+    // Tab in matrix: move to next cell
+    if (cursor.value.zone === 'matrix') {
+      event.preventDefault()
+      const matrixData = getMatrixByCursor()
+      if (matrixData) {
+        if (cursor.value.col < matrixData.matrix.cols - 1) {
+          cursor.value = { ...cursor.value, col: cursor.value.col + 1 }
+        } else if (cursor.value.row < matrixData.matrix.rows - 1) {
+          cursor.value = { ...cursor.value, row: cursor.value.row + 1, col: 0 }
+        }
+      }
+      return
+    }
+    event.preventDefault()
+    return
+  }
+
+  // Special keys
   if (event.key === '/') {
-    showCommandPalette.value = true;
-    commandQuery.value = '';
-    selectedCommandIndex.value = 0;
-    event.preventDefault();
-    nextTick(() => {
-      paletteInputRef.value?.focus();
-    });
-    return;
+    // Only open palette from text zone
+    if (cursor.value.zone === 'text') {
+      showCommandPalette.value = true
+      commandQuery.value = ''
+      selectedCommandIndex.value = 0
+      event.preventDefault()
+      nextTick(() => {
+        paletteInputRef.value?.focus()
+      })
+      return
+    }
   }
 
   if (event.key === 'Enter') {
-    insertNewLine();
-    event.preventDefault();
-    return;
+    if (cursor.value.zone === 'mathTemplate') {
+      // Enter in template: move to next slot, or exit if last slot
+      navigateSlotNext()
+      event.preventDefault()
+      return
+    }
+    insertNewLine()
+    event.preventDefault()
+    return
   }
 
   if (event.key === 'Backspace') {
-    deleteCharAtCursor();
-    event.preventDefault();
-    return;
+    if (cursor.value.zone === 'mathTemplate') {
+      deleteCharInSlot()
+      event.preventDefault()
+      return
+    }
+    deleteCharAtCursor()
+    event.preventDefault()
+    return
   }
 
   if (event.key === 'ArrowUp') {
-    handleArrowUp();
-    event.preventDefault();
-    return;
+    handleArrowUp()
+    event.preventDefault()
+    return
   }
 
   if (event.key === 'ArrowDown') {
-    handleArrowDown();
-    event.preventDefault();
-    return;
+    handleArrowDown()
+    event.preventDefault()
+    return
   }
 
   if (event.key === 'ArrowLeft') {
-    handleArrowLeft();
-    event.preventDefault();
-    return;
+    if (cursor.value.zone === 'mathTemplate') {
+      const data = getTemplateByCursor()
+      if (data && cursor.value.slotOffset > 0) {
+        cursor.value = { ...cursor.value, slotOffset: cursor.value.slotOffset - 1 }
+      }
+      event.preventDefault()
+      return
+    }
+    handleArrowLeft()
+    event.preventDefault()
+    return
   }
 
   if (event.key === 'ArrowRight') {
-    handleArrowRight();
-    event.preventDefault();
-    return;
+    if (cursor.value.zone === 'mathTemplate') {
+      const data = getTemplateByCursor()
+      if (data) {
+        const val = data.span.slotValues[cursor.value.slotName] || ''
+        if (cursor.value.slotOffset < val.length) {
+          cursor.value = { ...cursor.value, slotOffset: cursor.value.slotOffset + 1 }
+        }
+      }
+      event.preventDefault()
+      return
+    }
+    handleArrowRight()
+    event.preventDefault()
+    return
   }
 
   if (event.key === 'Escape') {
+    if (cursor.value.zone === 'mathTemplate') {
+      // Exit math template to text zone
+      exitMathTemplate()
+      event.preventDefault()
+      return
+    }
     if (cursor.value.zone === 'matrix') {
-      const line = notesStore.getLineById(cursor.value.lineId) as TextLine | MatrixLine | null;
+      const line = notesStore.getLineById(cursor.value.lineId) as TextLine | MatrixLine | null
       if (line?.type === 'text') {
-        cursor.value = { zone: 'text', lineId: line.id, charOffset: 0 };
+        cursor.value = { zone: 'text', lineId: line.id, charOffset: 0 }
       } else {
-        // Exit matrix to next line
-        const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+        const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
         if (lineIndex < document.value.length - 1) {
-          const nextLine = document.value[lineIndex + 1];
-          cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+          const nextLine = document.value[lineIndex + 1]
+          cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 }
         } else {
-          // Create new line
-          insertNewLine();
+          insertNewLine()
         }
       }
     }
-    event.preventDefault();
-    return;
+    event.preventDefault()
+    return
   }
 }
 
 // Regular character input
 function handleInput(event: Event) {
-  const target = event.target as HTMLInputElement;
-  const char = target.value;
-  
+  const target = event.target as HTMLInputElement
+  const char = target.value
+
   if (char && char.length > 0) {
     if (cursor.value.zone === 'text') {
-      insertCharAtCursor(char);
+      insertCharAtCursor(char)
     } else if (cursor.value.zone === 'matrix') {
-      insertCharInMatrix(char);
+      insertCharInMatrix(char)
+    } else if (cursor.value.zone === 'mathTemplate') {
+      insertCharInSlot(char)
     }
   }
-  
+
   // Clear input for next keystroke
-  target.value = '';
+  target.value = ''
 }
 
 function handleBlur() {
-  // Keep focus on hidden input unless palette is open
   if (!showCommandPalette.value) {
     nextTick(() => {
-      hiddenInput.value?.focus();
-    });
+      hiddenInput.value?.focus()
+    })
   }
 }
 
@@ -531,54 +771,198 @@ function handleFocus() {
   // Hidden input is always focused
 }
 
-// Navigation
+// === MATH TEMPLATE SLOT NAVIGATION ===
+
+type MathTemplateCursor = { zone: 'mathTemplate', lineId: string, templateSpanId: string, slotName: string, slotOffset: number }
+
+function navigateSlotNext() {
+  const data = getTemplateByCursor()
+  if (!data) return
+  const cur = cursor.value as MathTemplateCursor
+
+  const template = mathTemplates[data.span.templateId]
+  if (!template) return
+
+  const currentSlotIndex = template.slots.findIndex(s => s.name === cur.slotName)
+  if (currentSlotIndex < template.slots.length - 1) {
+    const nextSlot = template.slots[currentSlotIndex + 1]
+    const nextVal = data.span.slotValues[nextSlot.name] || ''
+    cursor.value = {
+      zone: 'mathTemplate',
+      lineId: cur.lineId,
+      templateSpanId: cur.templateSpanId,
+      slotName: nextSlot.name,
+      slotOffset: nextVal.length
+    }
+  } else {
+    exitMathTemplate()
+  }
+}
+
+function navigateSlotPrev() {
+  const data = getTemplateByCursor()
+  if (!data) return
+  const cur = cursor.value as MathTemplateCursor
+
+  const template = mathTemplates[data.span.templateId]
+  if (!template) return
+
+  const currentSlotIndex = template.slots.findIndex(s => s.name === cur.slotName)
+  if (currentSlotIndex > 0) {
+    const prevSlot = template.slots[currentSlotIndex - 1]
+    const prevVal = data.span.slotValues[prevSlot.name] || ''
+    cursor.value = {
+      zone: 'mathTemplate',
+      lineId: cur.lineId,
+      templateSpanId: cur.templateSpanId,
+      slotName: prevSlot.name,
+      slotOffset: prevVal.length
+    }
+  }
+}
+
+function exitMathTemplate() {
+  const cur = cursor.value as MathTemplateCursor
+  const line = notesStore.getLineById(cur.lineId) as TextLine | null
+  if (!line || line.type !== 'text') return
+
+  let offset = 0
+  for (const seg of line.content) {
+    if (seg.type === 'mathTemplate' && seg.id === cur.templateSpanId) {
+      offset += 1
+      break
+    }
+    offset += seg.type === 'text' ? (seg as TextSpan).value.length : 1
+  }
+
+  cursor.value = {
+    zone: 'text',
+    lineId: cur.lineId,
+    charOffset: offset
+  }
+  hiddenInput.value?.focus()
+}
+
+function insertCharInSlot(char: string) {
+  if (cursor.value.zone !== 'mathTemplate') return
+  const data = getTemplateByCursor()
+  if (!data) return
+
+  const currentVal = data.span.slotValues[cursor.value.slotName] || ''
+  const offset = cursor.value.slotOffset
+  const newVal = currentVal.slice(0, offset) + char + currentVal.slice(offset)
+  data.span.slotValues[cursor.value.slotName] = newVal
+  cursor.value = { ...cursor.value, slotOffset: offset + char.length }
+  updateDocument()
+}
+
+function deleteCharInSlot() {
+  if (cursor.value.zone !== 'mathTemplate') return
+  const data = getTemplateByCursor()
+  if (!data) return
+
+  const currentVal = data.span.slotValues[cursor.value.slotName] || ''
+  const offset = cursor.value.slotOffset
+
+  if (offset > 0) {
+    const newVal = currentVal.slice(0, offset - 1) + currentVal.slice(offset)
+    data.span.slotValues[cursor.value.slotName] = newVal
+    cursor.value = { ...cursor.value, slotOffset: offset - 1 }
+    updateDocument()
+  } else if (currentVal === '') {
+    // If slot is empty and backspace is pressed, check if we should delete the template
+    const template = mathTemplates[data.span.templateId]
+    if (!template) return
+
+    // Check if all slots are empty
+    const allEmpty = template.slots.every(s => !data.span.slotValues[s.name])
+    if (allEmpty) {
+      // Delete the entire template span
+      const idx = data.line.content.findIndex(
+        seg => seg.type === 'mathTemplate' && (seg as MathTemplateSpan).id === data.span.id
+      )
+      if (idx !== -1) {
+        data.line.content.splice(idx, 1)
+        // Ensure there's at least one text span
+        if (data.line.content.length === 0) {
+          data.line.content.push({ type: 'text', value: '' })
+        }
+        cursor.value = { zone: 'text', lineId: data.line.id, charOffset: 0 }
+        updateDocument()
+      }
+    } else {
+      // Move to previous slot
+      navigateSlotPrev()
+    }
+  }
+}
+
+function focusMathTemplateSlot(lineId: string, spanId: string, slotName: string) {
+  const line = notesStore.getLineById(lineId) as TextLine | null
+  if (!line || line.type !== 'text') return
+  const span = line.content.find(
+    (seg): seg is MathTemplateSpan => seg.type === 'mathTemplate' && seg.id === spanId
+  )
+  if (!span) return
+
+  const slotVal = span.slotValues[slotName] || ''
+  cursor.value = {
+    zone: 'mathTemplate',
+    lineId,
+    templateSpanId: spanId,
+    slotName,
+    slotOffset: slotVal.length
+  }
+  hiddenInput.value?.focus()
+}
+
+// === NAVIGATION ===
+
 function handleArrowUp() {
   if (cursor.value.zone === 'matrix') {
-    const matrixData = getMatrixByCursor();
-    if (!matrixData) return;
+    const matrixData = getMatrixByCursor()
+    if (!matrixData) return
     if (cursor.value.row > 0) {
-      cursor.value = { ...cursor.value, row: cursor.value.row - 1 };
+      cursor.value = { ...cursor.value, row: cursor.value.row - 1 }
     } else {
-      // Exit to previous line
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
       if (lineIndex > 0) {
-        const prevLine = document.value[lineIndex - 1];
-        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+        const prevLine = document.value[lineIndex - 1]
+        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 }
       }
     }
   } else {
-    const currentLineIndex = notesStore.getLineIndex(cursor.value.lineId);
+    const currentLineIndex = notesStore.getLineIndex(cursor.value.lineId)
     if (currentLineIndex > 0) {
-      const prevLine = document.value[currentLineIndex - 1];
-      cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+      const prevLine = document.value[currentLineIndex - 1]
+      cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 }
     }
   }
 }
 
 function handleArrowDown() {
   if (cursor.value.zone === 'matrix') {
-    const matrixData = getMatrixByCursor();
-    if (!matrixData) return;
+    const matrixData = getMatrixByCursor()
+    if (!matrixData) return
     if (cursor.value.row < matrixData.matrix.rows - 1) {
-      cursor.value = { ...cursor.value, row: cursor.value.row + 1 };
+      cursor.value = { ...cursor.value, row: cursor.value.row + 1 }
     } else {
-      // Exit to next line
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
       if (lineIndex < document.value.length - 1) {
-        const nextLine = document.value[lineIndex + 1];
-        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+        const nextLine = document.value[lineIndex + 1]
+        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 }
       } else {
-        insertNewLine();
+        insertNewLine()
       }
     }
   } else {
-    const currentLineIndex = notesStore.getLineIndex(cursor.value.lineId);
+    const currentLineIndex = notesStore.getLineIndex(cursor.value.lineId)
     if (currentLineIndex < document.value.length - 1) {
-      const nextLine = document.value[currentLineIndex + 1];
+      const nextLine = document.value[currentLineIndex + 1]
       if (nextLine.type === 'matrix') {
-        cursor.value = { zone: 'matrix', lineId: nextLine.id, matrixId: nextLine.id, row: 0, col: 0 };
+        cursor.value = { zone: 'matrix', lineId: nextLine.id, matrixId: nextLine.id, row: 0, col: 0 }
       } else {
-        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 }
       }
     }
   }
@@ -586,32 +970,31 @@ function handleArrowDown() {
 
 function handleArrowLeft() {
   if (cursor.value.zone === 'text') {
-    const currentLine = notesStore.getLineById(cursor.value.lineId);
+    const currentLine = notesStore.getLineById(cursor.value.lineId)
     if (currentLine?.type !== 'text') {
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
       if (lineIndex > 0) {
-        const prevLine = document.value[lineIndex - 1];
-        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+        const prevLine = document.value[lineIndex - 1]
+        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 }
       }
-      return;
+      return
     }
 
     if (cursor.value.charOffset > 0) {
-      cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset - 1 };
+      cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset - 1 }
     }
   } else if (cursor.value.zone === 'matrix') {
-    const matrixData = getMatrixByCursor();
-    if (!matrixData) return;
+    const matrixData = getMatrixByCursor()
+    if (!matrixData) return
     if (cursor.value.col > 0) {
-      cursor.value = { ...cursor.value, col: cursor.value.col - 1 };
+      cursor.value = { ...cursor.value, col: cursor.value.col - 1 }
     } else if (cursor.value.row > 0) {
-      cursor.value = { ...cursor.value, row: cursor.value.row - 1, col: matrixData.matrix.cols - 1 };
+      cursor.value = { ...cursor.value, row: cursor.value.row - 1, col: matrixData.matrix.cols - 1 }
     } else {
-      // Exit matrix to previous line
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
       if (lineIndex > 0) {
-        const prevLine = document.value[lineIndex - 1];
-        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+        const prevLine = document.value[lineIndex - 1]
+        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 }
       }
     }
   }
@@ -619,212 +1002,315 @@ function handleArrowLeft() {
 
 function handleArrowRight() {
   if (cursor.value.zone === 'text') {
-    const currentLine = notesStore.getLineById(cursor.value.lineId);
+    const currentLine = notesStore.getLineById(cursor.value.lineId)
     if (currentLine?.type !== 'text') {
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
       if (lineIndex < document.value.length - 1) {
-        const nextLine = document.value[lineIndex + 1];
-        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+        const nextLine = document.value[lineIndex + 1]
+        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 }
       } else {
-        insertNewLine();
+        insertNewLine()
       }
-      return;
+      return
     }
 
-    const lineLength = currentLine.content.reduce((sum, seg) => sum + (seg.type === 'text' ? seg.value.length : 1), 0);
+    const lineLength = (currentLine as TextLine).content.reduce(
+      (sum, seg) => sum + (seg.type === 'text' ? (seg as TextSpan).value.length : 1), 0
+    )
     if (cursor.value.charOffset < lineLength) {
-      cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 };
+      cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 }
     }
   } else if (cursor.value.zone === 'matrix') {
-    const matrixData = getMatrixByCursor();
-    if (!matrixData) return;
+    const matrixData = getMatrixByCursor()
+    if (!matrixData) return
     if (cursor.value.col < matrixData.matrix.cols - 1) {
-      cursor.value = { ...cursor.value, col: cursor.value.col + 1 };
+      cursor.value = { ...cursor.value, col: cursor.value.col + 1 }
     } else if (cursor.value.row < matrixData.matrix.rows - 1) {
-      cursor.value = { ...cursor.value, row: cursor.value.row + 1, col: 0 };
+      cursor.value = { ...cursor.value, row: cursor.value.row + 1, col: 0 }
     } else {
-      // Exit matrix to next line
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
       if (lineIndex < document.value.length - 1) {
-        const nextLine = document.value[lineIndex + 1];
-        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+        const nextLine = document.value[lineIndex + 1]
+        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 }
       } else {
-        insertNewLine();
+        insertNewLine()
       }
     }
   }
 }
 
-// Insertion operations
+// === INSERTION OPERATIONS ===
+
 function insertCharAtCursor(char: string) {
-  if (cursor.value.zone !== 'text') return;
+  if (cursor.value.zone !== 'text') return
 
-  const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine | MathExpressionLine | null;
-  if (!currentLine || currentLine.type !== 'text') return;
+  const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine | MathExpressionLine | null
+  if (!currentLine || currentLine.type !== 'text') return
 
-  // Append to last text segment
-  const lastSegment = currentLine.content[currentLine.content.length - 1];
+  const lastSegment = currentLine.content[currentLine.content.length - 1]
   if (lastSegment?.type === 'text') {
-    lastSegment.value += char;
+    (lastSegment as TextSpan).value += char
   } else {
-    currentLine.content.push({ type: 'text', value: char });
+    currentLine.content.push({ type: 'text', value: char })
   }
 
-  cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 };
-  updateDocument();
+  cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 }
+  updateDocument()
 }
 
 function insertCharInMatrix(char: string) {
-  if (cursor.value.zone !== 'matrix') return;
+  if (cursor.value.zone !== 'matrix') return
 
-  const matrixData = getMatrixByCursor();
-  if (!matrixData) return;
-  const matrix = matrixData.matrix;
+  const matrixData = getMatrixByCursor()
+  if (!matrixData) return
+  const matrix = matrixData.matrix
 
-  // Replace cell value with new character
-  matrix.data[cursor.value.row][cursor.value.col] = char;
-  
-  // Auto-advance to next cell
+  matrix.data[cursor.value.row][cursor.value.col] = char
+
   if (cursor.value.col < matrix.cols - 1) {
-    cursor.value = { ...cursor.value, col: cursor.value.col + 1 };
+    cursor.value = { ...cursor.value, col: cursor.value.col + 1 }
   } else if (cursor.value.row < matrix.rows - 1) {
-    cursor.value = { ...cursor.value, row: cursor.value.row + 1, col: 0 };
+    cursor.value = { ...cursor.value, row: cursor.value.row + 1, col: 0 }
   }
-  
-  updateDocument();
+
+  updateDocument()
 }
 
 function deleteCharAtCursor() {
   if (cursor.value.zone === 'text') {
-    const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine | MathExpressionLine | null;
-    if (!currentLine) return;
+    const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine | MathExpressionLine | null
+    if (!currentLine) return
 
     if (currentLine.type === 'math' && notesStore.activeNote) {
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
-      notesStore.activeNote.content.splice(lineIndex, 1);
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
+      notesStore.activeNote.content.splice(lineIndex, 1)
       if (lineIndex > 0) {
-        const prevLine = document.value[lineIndex - 1];
-        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+        const prevLine = document.value[lineIndex - 1]
+        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 }
       } else if (document.value.length > 0) {
-        cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 };
+        cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 }
       } else {
-        insertNewLine();
+        insertNewLine()
       }
-      updateDocument();
-      return;
+      updateDocument()
+      return
     }
 
-    if (currentLine.type !== 'text') return;
+    if (currentLine.type !== 'text') return
 
-    // Try to delete last character from last text segment
-    const lastSegment = currentLine.content[currentLine.content.length - 1];
-    
-    if (lastSegment?.type === 'text' && lastSegment.value.length > 0) {
-      // Delete character from text
-      lastSegment.value = lastSegment.value.slice(0, -1);
-      cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
-      updateDocument();
+    const lastSegment = currentLine.content[currentLine.content.length - 1]
+
+    if (lastSegment?.type === 'text' && (lastSegment as TextSpan).value.length > 0) {
+      (lastSegment as TextSpan).value = (lastSegment as TextSpan).value.slice(0, -1)
+      cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) }
+      updateDocument()
     } else if (lastSegment?.type === 'symbol') {
-      // Delete last symbol
-      currentLine.content.pop();
-      cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
-      updateDocument();
+      currentLine.content.pop()
+      cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) }
+      updateDocument()
+    } else if (lastSegment?.type === 'mathTemplate') {
+      // Focus the last slot of the template instead of deleting immediately
+      const span = lastSegment as MathTemplateSpan
+      const template = mathTemplates[span.templateId]
+      if (template) {
+        const lastSlot = template.slots[template.slots.length - 1]
+        const val = span.slotValues[lastSlot.name] || ''
+        cursor.value = {
+          zone: 'mathTemplate',
+          lineId: currentLine.id,
+          templateSpanId: span.id,
+          slotName: lastSlot.name,
+          slotOffset: val.length
+        }
+      }
     } else if (lastSegment?.type === 'matrix') {
-      currentLine.content.pop();
-      cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
-      updateDocument();
-    } else if (currentLine.content.length === 1 && 
-               currentLine.content[0].type === 'text' && 
-               currentLine.content[0].value === '' &&
+      currentLine.content.pop()
+      cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) }
+      updateDocument()
+    } else if (currentLine.content.length === 1 &&
+               currentLine.content[0].type === 'text' &&
+               (currentLine.content[0] as TextSpan).value === '' &&
                notesStore.activeNote &&
                notesStore.activeNote.content.length > 1) {
-      // Delete empty line (only if not the only line in document)
-      const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
-      notesStore.activeNote.content.splice(lineIndex, 1);
-      
-      // Move cursor to previous line
+      const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
+      notesStore.activeNote.content.splice(lineIndex, 1)
+
       if (lineIndex > 0) {
-        const prevLine = document.value[lineIndex - 1];
-        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+        const prevLine = document.value[lineIndex - 1]
+        cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 }
       } else if (document.value.length > 0) {
-        cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 };
+        cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 }
       }
-      updateDocument();
+      updateDocument()
     }
   } else if (cursor.value.zone === 'matrix') {
-    const matrixData = getMatrixByCursor();
-    if (!matrixData) return;
+    const matrixData = getMatrixByCursor()
+    if (!matrixData) return
 
-    // Check if matrix is empty
-    const isEmpty = matrixData.matrix.data.every(row => row.every(cell => cell === ''));
-    
+    const isEmpty = matrixData.matrix.data.every(row => row.every(cell => cell === ''))
+
     if (isEmpty && notesStore.activeNote && notesStore.activeNote.content.length > 1) {
       if (matrixData.line.type === 'text') {
         matrixData.line.content = matrixData.line.content.filter(
-          (segment) => !(segment.type === 'matrix' && segment.id === cursor.value.matrixId)
-        );
-        cursor.value = { zone: 'text', lineId: matrixData.line.id, charOffset: 0 };
-        updateDocument();
+          (segment) => !(segment.type === 'matrix' && (segment as MatrixSpan).id === (cursor.value as { zone: 'matrix', matrixId: string }).matrixId)
+        )
+        cursor.value = { zone: 'text', lineId: matrixData.line.id, charOffset: 0 }
+        updateDocument()
       } else {
-        // Delete entire empty matrix line
-        const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
-        notesStore.activeNote.content.splice(lineIndex, 1);
-        
-        // Move cursor to previous line
+        const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
+        notesStore.activeNote.content.splice(lineIndex, 1)
+
         if (lineIndex > 0) {
-          const prevLine = document.value[lineIndex - 1];
-          cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+          const prevLine = document.value[lineIndex - 1]
+          cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 }
         } else if (document.value.length > 0) {
-          cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 };
+          cursor.value = { zone: 'text', lineId: document.value[0].id, charOffset: 0 }
         }
-        updateDocument();
+        updateDocument()
       }
     } else {
-      // Just clear current cell
-      matrixData.matrix.data[cursor.value.row][cursor.value.col] = '';
-      updateDocument();
+      matrixData.matrix.data[cursor.value.row][cursor.value.col] = ''
+      updateDocument()
     }
   }
 }
 
 function insertNewLine() {
-  const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+  // If in math template, exit first
+  if (cursor.value.zone === 'mathTemplate') {
+    exitMathTemplate()
+  }
+
+  const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
   const newLine: TextLine = {
     id: generateId(),
     type: 'text',
     content: [{ type: 'text', value: '' }]
-  };
+  }
 
   if (notesStore.activeNote) {
-    notesStore.activeNote.content.splice(lineIndex + 1, 0, newLine);
-    updateDocument();
-    cursor.value = { zone: 'text', lineId: newLine.id, charOffset: 0 };
+    notesStore.activeNote.content.splice(lineIndex + 1, 0, newLine)
+    updateDocument()
+    cursor.value = { zone: 'text', lineId: newLine.id, charOffset: 0 }
   }
 }
 
-function insertMathSymbol(symbolId: string) {
-  if (cursor.value.zone !== 'text') return;
+// === TEMPLATE INSERTION ===
 
-  const latex = symbolToLatex[symbolId] ?? symbolId;
-  const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
-  const displayMode = ['sum', 'integral', 'sigma'].includes(symbolId);
-  const newLine = createMathExpression(latex, generateId(), displayMode);
+function insertTemplate(templateId: string) {
+  const template = mathTemplates[templateId]
+  if (!template) return
 
-  if (notesStore.activeNote) {
-    notesStore.activeNote.content.splice(lineIndex + 1, 0, newLine);
-    updateDocument();
-    cursor.value = {
-      zone: 'text',
-      lineId: newLine.id,
-      charOffset: 0
-    };
+  // Ensure we're on a text line
+  let targetLine = notesStore.getLineById(cursor.value.lineId) as TextLine | null
+  if (!targetLine || targetLine.type !== 'text') {
+    // Create a new text line if needed
+    const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
+    const newLine: TextLine = {
+      id: generateId(),
+      type: 'text',
+      content: [{ type: 'text', value: '' }]
+    }
+    if (notesStore.activeNote) {
+      notesStore.activeNote.content.splice(lineIndex + 1, 0, newLine)
+      targetLine = newLine
+    } else {
+      return
+    }
   }
 
-  closeCommandPalette();
+  // Create the template span
+  const spanId = generateId()
+  const slotValues: Record<string, string> = {}
+  for (const slot of template.slots) {
+    slotValues[slot.name] = slot.defaultValue
+  }
+
+  const templateSpan: MathTemplateSpan = {
+    id: spanId,
+    type: 'mathTemplate',
+    templateId,
+    slotValues
+  }
+
+  // Insert into the text line content
+  targetLine.content.push(templateSpan)
+
+  // Focus the first slot
+  const firstSlot = template.slots[0]
+  cursor.value = {
+    zone: 'mathTemplate',
+    lineId: targetLine.id,
+    templateSpanId: spanId,
+    slotName: firstSlot.name,
+    slotOffset: slotValues[firstSlot.name]?.length || 0
+  }
+
+  updateDocument()
+  closeCommandPalette()
+  hiddenInput.value?.focus()
+}
+
+// === INLINE SYMBOL INSERTION ===
+
+function insertInlineSymbol(symbolId: string) {
+  const symbolDef = inlineSymbols[symbolId]
+  if (!symbolDef) return
+
+  let targetLine = notesStore.getLineById(cursor.value.lineId) as TextLine | null
+
+  // If in math template, insert the symbol's latex directly into the slot
+  if (cursor.value.zone === 'mathTemplate') {
+    const data = getTemplateByCursor()
+    if (data) {
+      const currentVal = data.span.slotValues[cursor.value.slotName] || ''
+      const offset = cursor.value.slotOffset
+      const newVal = currentVal.slice(0, offset) + symbolDef.latex + currentVal.slice(offset)
+      data.span.slotValues[cursor.value.slotName] = newVal
+      cursor.value = { ...cursor.value, slotOffset: offset + symbolDef.latex.length }
+      updateDocument()
+      hiddenInput.value?.focus()
+      return
+    }
+  }
+
+  if (!targetLine || targetLine.type !== 'text') {
+    const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
+    const newLine: TextLine = {
+      id: generateId(),
+      type: 'text',
+      content: [{ type: 'text', value: '' }]
+    }
+    if (notesStore.activeNote) {
+      notesStore.activeNote.content.splice(lineIndex + 1, 0, newLine)
+      targetLine = newLine
+    } else {
+      return
+    }
+  }
+
+  const symbolSpan: SymbolSpan = {
+    type: 'symbol',
+    value: symbolId,
+    display: symbolDef.display,
+    latex: symbolDef.latex
+  }
+
+  targetLine.content.push(symbolSpan)
+  const prevOffset = cursor.value.zone === 'text' ? cursor.value.charOffset : 0
+  cursor.value = {
+    zone: 'text',
+    lineId: targetLine.id,
+    charOffset: prevOffset + 1
+  }
+
+  updateDocument()
+  closeCommandPalette()
+  hiddenInput.value?.focus()
 }
 
 function insertMatrix(rows: number, cols: number) {
-  const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine | MatrixLine | MathExpressionLine | null;
+  const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine | MatrixLine | MathExpressionLine | null
   if (currentLine?.type === 'text') {
     const matrixSpan: MatrixSpan = {
       id: generateId(),
@@ -832,9 +1318,9 @@ function insertMatrix(rows: number, cols: number) {
       rows,
       cols,
       data: Array(rows).fill(null).map(() => Array(cols).fill(''))
-    };
-    currentLine.content.push(matrixSpan);
-    updateDocument();
+    }
+    currentLine.content.push(matrixSpan)
+    updateDocument()
 
     cursor.value = {
       zone: 'matrix',
@@ -842,23 +1328,23 @@ function insertMatrix(rows: number, cols: number) {
       matrixId: matrixSpan.id,
       row: 0,
       col: 0
-    };
-    closeCommandPalette();
-    return;
+    }
+    closeCommandPalette()
+    return
   }
 
-  const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
+  const lineIndex = notesStore.getLineIndex(cursor.value.lineId)
   const newMatrixLine: MatrixLine = {
     id: generateId(),
     type: 'matrix',
     rows,
     cols,
     data: Array(rows).fill(null).map(() => Array(cols).fill(''))
-  };
+  }
 
   if (notesStore.activeNote) {
-    notesStore.activeNote.content.splice(lineIndex + 1, 0, newMatrixLine);
-    updateDocument();
+    notesStore.activeNote.content.splice(lineIndex + 1, 0, newMatrixLine)
+    updateDocument()
 
     cursor.value = {
       zone: 'matrix',
@@ -866,17 +1352,17 @@ function insertMatrix(rows: number, cols: number) {
       matrixId: newMatrixLine.id,
       row: 0,
       col: 0
-    };
+    }
   }
 
-  closeCommandPalette();
+  closeCommandPalette()
 }
 
 function updateMathLatex(lineId: string, latex: string) {
-  const line = notesStore.getLineById(lineId) as MathExpressionLine | null;
+  const line = notesStore.getLineById(lineId) as MathExpressionLine | null
   if (line && line.type === 'math') {
-    line.latex = latex;
-    updateDocument();
+    line.latex = latex
+    updateDocument()
   }
 }
 
@@ -885,11 +1371,11 @@ function focusMathExpression(lineId: string) {
     zone: 'text',
     lineId,
     charOffset: 0
-  };
+  }
 }
 
 function blurMathExpression() {
-  hiddenInput.value?.focus();
+  hiddenInput.value?.focus()
 }
 
 function focusMatrixCell(lineId: string, matrixId: string, row: number, col: number) {
@@ -899,133 +1385,144 @@ function focusMatrixCell(lineId: string, matrixId: string, row: number, col: num
     matrixId,
     row,
     col
-  };
-  hiddenInput.value?.focus();
+  }
+  hiddenInput.value?.focus()
 }
 
 function handleDisplayClick(event: MouseEvent) {
-  const target = event.target as HTMLElement;
+  const target = event.target as HTMLElement
 
-  const editorDisplay = window.document.querySelector('.editor-display') as HTMLElement | null;
-  if (!editorDisplay?.contains(target)) return;
-  
+  const editorDisplay = window.document.querySelector('.editor-display') as HTMLElement | null
+  if (!editorDisplay?.contains(target)) return
+
   // Click on matrix cell
   if (target.classList.contains('matrix-cell-textbook')) {
-    const cellEl = target;
-    const lineEl = cellEl.closest('[data-line-id]');
-    const matrixId = cellEl.getAttribute('data-matrix-id');
+    const cellEl = target
+    const lineEl = cellEl.closest('[data-line-id]')
+    const matrixId = cellEl.getAttribute('data-matrix-id')
     if (lineEl) {
-      const lineId = lineEl.getAttribute('data-line-id');
-      const row = parseInt(cellEl.getAttribute('data-row') || '0');
-      const col = parseInt(cellEl.getAttribute('data-col') || '0');
+      const lineId = lineEl.getAttribute('data-line-id')
+      const row = parseInt(cellEl.getAttribute('data-row') || '0')
+      const col = parseInt(cellEl.getAttribute('data-col') || '0')
       if (lineId && matrixId) {
-        focusMatrixCell(lineId, matrixId, row, col);
+        focusMatrixCell(lineId, matrixId, row, col)
       }
     }
-    return;
+    return
   }
 
-  // Click on text line - set cursor to beginning of line
-  const lineEl = target.closest('.container-line');
+  // Click on math template
+  const mathTemplateEl = target.closest('.math-template')
+  if (mathTemplateEl) {
+    // MathTemplate component handles its own clicks
+    return
+  }
+
+  // Click on text line
+  const lineEl = target.closest('.container-line')
   if (lineEl) {
-    const lineId = lineEl.getAttribute('data-line-id');
+    const lineId = lineEl.getAttribute('data-line-id')
     if (lineId) {
       cursor.value = {
         zone: 'text',
         lineId: lineId,
         charOffset: 0
-      };
-      hiddenInput.value?.focus();
+      }
+      hiddenInput.value?.focus()
     }
-    return;
+    return
   }
 
   if (document.value.length > 0) {
-    const lastLine = document.value[document.value.length - 1];
+    const lastLine = document.value[document.value.length - 1]
     cursor.value = {
       zone: 'text',
       lineId: lastLine.id,
       charOffset: 0
-    };
+    }
   } else {
-    insertNewLine();
+    insertNewLine()
   }
-  hiddenInput.value?.focus();
+  hiddenInput.value?.focus()
 }
 
-function handleMouseMove(event: MouseEvent) {
-  // Could use for text selection later
-}
+// === COMMAND PALETTE ===
 
-// Command palette
 function handlePaletteKeydown(event: KeyboardEvent) {
   if (event.key === 'ArrowDown') {
-    selectedCommandIndex.value = Math.min(selectedCommandIndex.value + 1, filteredCommands.value.length - 1);
-    event.preventDefault();
+    selectedCommandIndex.value = Math.min(selectedCommandIndex.value + 1, filteredCommands.value.length - 1)
+    event.preventDefault()
   } else if (event.key === 'ArrowUp') {
-    selectedCommandIndex.value = Math.max(selectedCommandIndex.value - 1, 0);
-    event.preventDefault();
+    selectedCommandIndex.value = Math.max(selectedCommandIndex.value - 1, 0)
+    event.preventDefault()
   } else if (event.key === 'Enter') {
     if (filteredCommands.value[selectedCommandIndex.value]) {
-      executeCommand(filteredCommands.value[selectedCommandIndex.value]);
+      executeCommand(filteredCommands.value[selectedCommandIndex.value])
     }
-    event.preventDefault();
+    event.preventDefault()
   } else if (event.key === 'Escape') {
-    closeCommandPalette();
-    event.preventDefault();
+    closeCommandPalette()
+    event.preventDefault()
   }
 }
 
 function executeCommand(cmd: Command) {
   if (cmd.category === 'matrix') {
-    const [, size] = cmd.id.split('-');
-    const [rows, cols] = size.split('x').map(Number);
-    insertMatrix(rows, cols);
-  } else if (cmd.category === 'symbol' || cmd.category === 'operator' || cmd.category === 'math') {
-    insertMathSymbol(cmd.id);
+    const [, size] = cmd.id.split('-')
+    const [rows, cols] = size.split('x').map(Number)
+    insertMatrix(rows, cols)
+  } else if (cmd.category === 'template') {
+    // Extract template ID from command ID (format: tpl-templateId)
+    const templateId = cmd.id.replace('tpl-', '')
+    insertTemplate(templateId)
+  } else if (cmd.category === 'symbol' || cmd.category === 'operator') {
+    // Extract symbol ID from command ID (format: sym-symbolId)
+    const symbolId = cmd.id.replace('sym-', '')
+    insertInlineSymbol(symbolId)
   }
 }
 
 function closeCommandPalette() {
-  showCommandPalette.value = false;
-  commandQuery.value = '';
-  hiddenInput.value?.focus();
+  showCommandPalette.value = false
+  commandQuery.value = ''
+  hiddenInput.value?.focus()
 }
 
-// Helper functions
+// === HELPER FUNCTIONS ===
+
 function createNewNote() {
-  notesStore.createNote();
+  notesStore.createNote()
 }
 
 function toggleTheme() {
-  editorStore.toggleTheme();
+  editorStore.toggleTheme()
 }
 
 function updateNoteTitle() {
   if (notesStore.activeNote) {
-    notesStore.activeNote.updatedAt = Date.now();
+    notesStore.activeNote.updatedAt = Date.now()
   }
 }
 
 function updateDocument() {
   if (notesStore.activeNote) {
-    notesStore.activeNote.updatedAt = Date.now();
+    notesStore.activeNote.updatedAt = Date.now()
   }
 }
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString();
+  return new Date(timestamp).toLocaleDateString()
 }
 
 function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 }
 </script>
 
 <style scoped>
 .math-writer {
   display: grid;
-  grid-template-columns: 250px 1fr 280px;
+  grid-template-columns: 240px 1fr 280px;
   height: 100vh;
   background: var(--color-bg-primary);
 }
@@ -1081,7 +1578,11 @@ function generateId(): string {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.theme-icon {
   font-size: 16px;
+  line-height: 1;
 }
 
 .btn-theme-toggle:hover {
@@ -1098,6 +1599,10 @@ function generateId(): string {
   color: var(--color-accent);
   cursor: pointer;
   transition: all 0.2s;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn-new-note:hover {
@@ -1163,12 +1668,12 @@ function generateId(): string {
 /* CRITICAL: Display layer is read-only HTML */
 .editor-display {
   flex: 1;
-  padding: 32px 40px;
-  padding-left: 60px;
+  padding: 32px 48px;
+  padding-left: 72px;
   overflow-y: auto;
   font-family: 'Georgia', 'Times New Roman', serif;
   font-size: 16px;
-  line-height: 1.7;
+  line-height: 1.8;
   color: var(--color-text-primary);
   outline: none;
   user-select: none;
@@ -1176,14 +1681,14 @@ function generateId(): string {
   background: var(--color-bg-primary);
 }
 
-/* Container lines - allows text to flow naturally */
+/* Container lines */
 .container-line {
   display: block;
   min-height: auto;
   position: relative;
   word-wrap: break-word;
-  margin: 8px 0;
-  padding: 2px 0;
+  margin: 4px 0;
+  padding: 4px 0;
 }
 
 .container-line::before {
@@ -1191,31 +1696,39 @@ function generateId(): string {
   position: absolute;
   left: -48px;
   font-size: 12px;
-  color: #999;
+  color: var(--color-text-tertiary);
   text-align: right;
   width: 32px;
+  top: 4px;
 }
 
-/* Text segments - flow inline naturally */
+/* Text segments */
 .text-segment {
   display: inline;
   font-family: inherit;
   font-size: inherit;
 }
 
-.symbol {
-  display: inline;
-  color: var(--color-text-primary);
-  font-weight: 600;
-  font-size: 20px;
-  margin: 0 3px;
-  vertical-align: -2px;
+/* Inline symbol rendering (KaTeX) */
+.symbol-inline {
+  display: inline-flex;
+  align-items: baseline;
+  vertical-align: baseline;
+  margin: 0 1px;
+}
+
+.symbol-render {
+  display: inline-block;
+}
+
+.symbol-render :deep(.katex) {
+  font-size: 1em;
 }
 
 .empty-line-placeholder {
   display: inline-block;
   width: 0;
-  height: 1.7em;
+  height: 1.8em;
   vertical-align: baseline;
 }
 
@@ -1237,7 +1750,6 @@ function generateId(): string {
   opacity: 1;
 }
 
-/* Brackets - professional looking, scale with matrix */
 .matrix-bracket {
   width: 14px;
   flex-shrink: 0;
@@ -1253,7 +1765,6 @@ function generateId(): string {
   stroke-linecap: round;
 }
 
-/* Matrix grid - clean, no visible borders */
 .matrix-grid {
   display: inline-grid;
   grid-auto-flow: row;
@@ -1262,7 +1773,6 @@ function generateId(): string {
   margin: 0;
 }
 
-/* TEXTBOOK STYLE: Matrix cells with no borders, subtle spacing */
 .matrix-cell-textbook {
   min-width: 45px;
   min-height: 32px;
@@ -1280,15 +1790,12 @@ function generateId(): string {
   transition: all 0.15s;
 }
 
-/* Active cell gets subtle highlight, not big border */
 .matrix-cell-textbook.is-active {
   background: rgba(33, 150, 243, 0.08);
   border-bottom: 2px solid #2196F3;
-  padding: 6px 8px;
   font-weight: 500;
 }
 
-/* Hover state */
 .matrix-cell-textbook:hover {
   background: rgba(0, 0, 0, 0.02);
 }
@@ -1313,12 +1820,12 @@ function generateId(): string {
 .command-palette {
   position: fixed;
   z-index: 1000;
-  background: white;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  min-width: 400px;
-  max-height: 400px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  min-width: 420px;
+  max-height: 440px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1327,14 +1834,14 @@ function generateId(): string {
 .palette-header {
   display: flex;
   align-items: center;
-  padding: 10px 12px;
-  border-bottom: 1px solid #eee;
-  background: #f5f5f5;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
 }
 
 .palette-icon {
   font-size: 16px;
-  color: #666;
+  color: var(--color-text-tertiary);
   margin-right: 8px;
   font-weight: bold;
 }
@@ -1346,27 +1853,27 @@ function generateId(): string {
   font-size: 14px;
   background: transparent;
   font-family: inherit;
-  color: #333;
+  color: var(--color-text-primary);
 }
 
 .palette-input::placeholder {
-  color: #999;
+  color: var(--color-text-disabled);
 }
 
 .palette-list {
   flex: 1;
   overflow-y: auto;
-  max-height: 300px;
+  max-height: 360px;
 }
 
 .palette-item {
   display: flex;
   align-items: center;
-  padding: 10px 12px;
+  padding: 10px 14px;
   cursor: pointer;
-  transition: background 0.2s;
-  border-bottom: 1px solid #f0f0f0;
-  color: #333;
+  transition: background 0.15s;
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text-primary);
 }
 
 .palette-item:last-child {
@@ -1374,19 +1881,20 @@ function generateId(): string {
 }
 
 .palette-item:hover {
-  background: #f0f8ff;
+  background: var(--color-bg-hover);
 }
 
 .palette-item.selected {
-  background: #e3f2fd;
-  border-left: 3px solid #2196F3;
+  background: var(--color-accent-light);
+  border-left: 3px solid var(--color-accent);
 }
 
 .cmd-icon {
   font-size: 18px;
   margin-right: 12px;
-  min-width: 24px;
+  min-width: 28px;
   text-align: center;
+  color: var(--color-accent);
 }
 
 .cmd-info {
@@ -1398,13 +1906,22 @@ function generateId(): string {
 .cmd-name {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
 }
 
 .cmd-desc {
   font-size: 12px;
-  color: #999;
-  margin-top: 2px;
+  color: var(--color-text-tertiary);
+  margin-top: 1px;
+}
+
+.cmd-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
 /* RIGHT SIDEBAR */
@@ -1423,29 +1940,68 @@ function generateId(): string {
 
 .keypad-section h4 {
   margin: 0 0 var(--spacing-sm) 0;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  color: var(--color-text-secondary);
+  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary);
 }
 
 .keypad-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: var(--spacing-sm);
+  gap: 4px;
+}
+
+.keypad-grid-2col {
+  grid-template-columns: repeat(2, 1fr);
 }
 
 .keypad-btn {
-  padding: var(--spacing-sm);
+  padding: 8px 4px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-primary);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s;
+  font-size: 16px;
+  text-align: center;
+  color: var(--color-text-primary);
 }
 
 .keypad-btn:hover {
   background: var(--color-accent-light);
   border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.keypad-btn:active {
+  transform: scale(0.96);
+}
+
+/* Template buttons - larger, with label */
+.keypad-btn-template {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px;
+}
+
+.btn-symbol {
+  font-size: 20px;
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+.btn-label {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.keypad-btn-template:hover .btn-label {
+  color: var(--color-accent);
 }
 
 .shortcuts-list {
@@ -1459,21 +2015,23 @@ function generateId(): string {
   align-items: center;
   gap: var(--spacing-sm);
   font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 .shortcut-item kbd {
   padding: 2px 6px;
-  font-family: var(--font-mono);
+  font-family: monospace;
   font-size: 10px;
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
-  border-radius: 2px;
+  border-radius: 3px;
+  min-width: 24px;
+  text-align: center;
 }
 
 /* Line highlighting */
 .container-line.is-active {
-  background: rgba(100, 150, 255, 0.03);
-  padding: 0 4px;
+  background: rgba(77, 171, 247, 0.03);
   border-radius: 2px;
 }
 </style>
