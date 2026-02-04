@@ -114,7 +114,7 @@ function handleEditorKeydown(event: KeyboardEvent) {
 <style scoped>
 .math-expression {
   display: inline-block;
-  min-width: 40px;
+  min-width: 0;
   padding: 0;
   margin: 0;
   cursor: pointer;

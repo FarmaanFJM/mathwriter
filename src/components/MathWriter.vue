@@ -733,7 +733,8 @@ function insertMathSymbol(symbolId: string) {
 
   const latex = symbolToLatex[symbolId] ?? symbolId;
   const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
-  const newLine = createMathExpression(latex, generateId());
+  const displayMode = ['sum', 'integral', 'sigma'].includes(symbolId);
+  const newLine = createMathExpression(latex, generateId(), displayMode);
 
   if (notesStore.activeNote) {
     notesStore.activeNote.content.splice(lineIndex + 1, 0, newLine);

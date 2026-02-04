@@ -1,9 +1,9 @@
 import type { MathExpressionLine } from '../types/editor'
 
 export const symbolToLatex: Record<string, string> = {
-  sigma: '\\Sigma',
-  sum: '\\sum',
-  integral: '\\int',
+  sigma: '\\displaystyle \\Sigma',
+  sum: '\\displaystyle \\sum',
+  integral: '\\displaystyle \\int',
   pi: '\\pi',
   alpha: '\\alpha',
   beta: '\\beta',
@@ -26,11 +26,15 @@ export const symbolToLatex: Record<string, string> = {
   subscript: 'x_{}'
 }
 
-export function createMathExpression(latex: string, id: string): MathExpressionLine {
+export function createMathExpression(
+  latex: string,
+  id: string,
+  displayMode: boolean
+): MathExpressionLine {
   return {
     id,
     type: 'math',
     latex,
-    displayMode: false
+    displayMode
   }
 }
