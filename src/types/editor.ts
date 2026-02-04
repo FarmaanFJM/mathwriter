@@ -54,6 +54,7 @@ export interface Command {
   name: string
   description: string
   category: 'insert' | 'symbol' | 'special'
+  icon?: string
 }
 
 // Symbol definition for keypad

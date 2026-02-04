@@ -45,8 +45,10 @@
           v-for="(line, lineIndex) in document"
           :key="line.id"
           class="container-line"
+          :class="{ active: cursor.lineId === line.id }"
           :data-line-id="line.id"
           :data-line-index="lineIndex"
+          :data-line-number="lineIndex + 1"
         >
           <!-- Text line -->
           <p v-if="line.type === 'text'" class="text-block">
@@ -54,10 +56,9 @@
               <template v-if="segment.type === 'text'">{{ segment.value }}</template>
               <span v-else class="symbol">{{ segment.display }}</span>
             </template>
-            <span v-if="cursor.zone === 'text' && cursor.lineId === line.id" class="cursor-indicator">|</span>
           </p>
 
-          <!-- Matrix line -->
+          <!-- Matrix line (INLINE) -->
           <MatrixBlock
             v-else-if="line.type === 'matrix'"
             :matrix-line="line"
@@ -66,43 +67,49 @@
             :active-col="cursor.zone === 'matrix' && cursor.lineId === line.id ? cursor.col : -1"
             @cell-update="updateMatrixCell(line.id, $event)"
             @cell-focus="focusMatrixCell(line.id, $event.row, $event.col)"
+            @matrix-keydown="handleMatrixKeydown(line.id, $event)"
           />
+        </div>
+
+        <!-- INLINE Command Palette (VS Code style) -->
+        <div
+          v-if="showCommandPalette"
+          class="command-palette-inline"
+          :style="palettePosition"
+        >
+          <div class="palette-header-inline">
+            <span class="palette-icon">/</span>
+            <input
+              v-model="commandQuery"
+              type="text"
+              class="palette-input"
+              placeholder="matrix, sigma, sqrt..."
+              @keydown="handlePaletteKeydown"
+              ref="paletteInputRef"
+            />
+          </div>
+
+          <div class="palette-list">
+            <div
+              v-for="(cmd, idx) in filteredCommands"
+              :key="cmd.id"
+              class="palette-item"
+              :class="{ selected: idx === selectedCommandIndex }"
+              @click="executeCommand(cmd)"
+            >
+              <span class="cmd-icon">{{ cmd.icon }}</span>
+              <div class="cmd-info">
+                <span class="cmd-name">{{ cmd.name }}</span>
+                <span class="cmd-desc">{{ cmd.description }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- RIGHT SIDEBAR: Keypad + Command Palette -->
+    <!-- RIGHT SIDEBAR: Keypad -->
     <div class="sidebar-right">
-      <!-- Command Search -->
-      <div class="command-search">
-        <input
-          v-model="commandQuery"
-          type="text"
-          placeholder="Type / for commands"
-          @keydown.prevent.slash="showCommandPalette = true"
-          @keydown="handleCommandInput"
-          class="command-input"
-        />
-      </div>
-
-      <!-- Command Palette (INLINE, filtered list) -->
-      <div v-if="showCommandPalette" class="command-palette">
-        <div class="palette-header">Commands</div>
-        <div class="command-list">
-          <div
-            v-for="(cmd, idx) in filteredCommands"
-            :key="cmd.id"
-            class="command-item"
-            :class="{ selected: idx === selectedCommandIndex }"
-            @click="executeCommand(cmd)"
-          >
-            <span class="cmd-name">{{ cmd.name }}</span>
-            <span class="cmd-desc">{{ cmd.description }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Keypad -->
       <div class="keypad">
         <div class="keypad-section">
           <h4>Math Symbols</h4>
@@ -137,6 +144,24 @@
             <button class="keypad-btn" @click="deleteCurrentLine">Delete Line</button>
           </div>
         </div>
+
+        <div class="keypad-section">
+          <h4>Keyboard Shortcuts</h4>
+          <div class="shortcuts-list">
+            <div class="shortcut-item">
+              <kbd>/</kbd> <span>Open commands</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>↑↓←→</kbd> <span>Navigate</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Esc</kbd> <span>Exit matrix</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Enter</kbd> <span>New line</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -150,6 +175,7 @@ import MatrixBlock from './MatrixBlock.vue';
 
 const notesStore = useNotesStore();
 const editorRef = ref<HTMLDivElement | null>(null);
+const paletteInputRef = ref<HTMLInputElement | null>(null);
 
 // Initialize
 onMounted(() => {
@@ -181,17 +207,43 @@ const commandQuery = ref('');
 const showCommandPalette = ref(false);
 const selectedCommandIndex = ref(0);
 
-// Commands
+// Position palette near cursor line
+const palettePosition = computed(() => {
+  if (!cursor.value.lineId) return {};
+  
+  const lineEl = window.document.querySelector(`[data-line-id="${cursor.value.lineId}"]`);
+  if (!lineEl) return {};
+
+  const rect = lineEl.getBoundingClientRect();
+  const editorRect = editorRef.value?.getBoundingClientRect();
+  
+  if (!editorRect) return {};
+
+  return {
+    position: 'absolute' as const,
+    top: `${rect.bottom - editorRect.top + 4}px`,
+    left: `${rect.left - editorRect.left}px`,
+    maxWidth: `${Math.min(500, rect.width)}px`
+  };
+});
+
+// Commands with icons
 const commands: Command[] = [
-  { id: 'matrix-2x2', name: 'Matrix 2×2', description: 'Insert 2×2 matrix', category: 'insert' },
-  { id: 'matrix-3x3', name: 'Matrix 3×3', description: 'Insert 3×3 matrix', category: 'insert' },
-  { id: 'sigma', name: 'Sigma Σ', description: 'Summation symbol', category: 'symbol' },
-  { id: 'integral', name: 'Integral ∫', description: 'Integral symbol', category: 'symbol' },
-  { id: 'sqrt', name: 'Square Root √', description: 'Square root symbol', category: 'symbol' },
-  { id: 'pi', name: 'Pi π', description: 'Pi symbol', category: 'symbol' },
-  { id: 'theta', name: 'Theta θ', description: 'Theta symbol', category: 'symbol' },
-  { id: 'alpha', name: 'Alpha α', description: 'Alpha symbol', category: 'symbol' },
-  { id: 'beta', name: 'Beta β', description: 'Beta symbol', category: 'symbol' },
+  { id: 'matrix-2x2', name: 'matrix 2×2', description: 'Insert 2×2 matrix', category: 'insert', icon: '⊞' },
+  { id: 'matrix-2x3', name: 'matrix 2×3', description: 'Insert 2×3 matrix', category: 'insert', icon: '⊞' },
+  { id: 'matrix-3x2', name: 'matrix 3×2', description: 'Insert 3×2 matrix', category: 'insert', icon: '⊞' },
+  { id: 'matrix-3x3', name: 'matrix 3×3', description: 'Insert 3×3 matrix', category: 'insert', icon: '⊞' },
+  { id: 'matrix-4x4', name: 'matrix 4×4', description: 'Insert 4×4 matrix', category: 'insert', icon: '⊞' },
+  { id: 'sigma', name: 'sigma', description: 'Insert Σ symbol', category: 'symbol', icon: 'Σ' },
+  { id: 'integral', name: 'integral', description: 'Insert ∫ symbol', category: 'symbol', icon: '∫' },
+  { id: 'sqrt', name: 'sqrt', description: 'Insert √ symbol', category: 'symbol', icon: '√' },
+  { id: 'pi', name: 'pi', description: 'Insert π symbol', category: 'symbol', icon: 'π' },
+  { id: 'theta', name: 'theta', description: 'Insert θ symbol', category: 'symbol', icon: 'θ' },
+  { id: 'alpha', name: 'alpha', description: 'Insert α symbol', category: 'symbol', icon: 'α' },
+  { id: 'beta', name: 'beta', description: 'Insert β symbol', category: 'symbol', icon: 'β' },
+  { id: 'gamma', name: 'gamma', description: 'Insert γ symbol', category: 'symbol', icon: 'γ' },
+  { id: 'delta', name: 'delta', description: 'Insert δ symbol', category: 'symbol', icon: 'δ' },
+  { id: 'lambda', name: 'lambda', description: 'Insert λ symbol', category: 'symbol', icon: 'λ' },
 ];
 
 const filteredCommands = computed(() => {
@@ -221,28 +273,26 @@ const mathSymbols: MathSymbol[] = [
 function handleKeydown(event: KeyboardEvent) {
   // Command palette navigation
   if (showCommandPalette.value) {
-    if (event.key === 'ArrowDown') {
-      selectedCommandIndex.value = Math.min(selectedCommandIndex.value + 1, filteredCommands.value.length - 1);
-      event.preventDefault();
-    } else if (event.key === 'ArrowUp') {
-      selectedCommandIndex.value = Math.max(selectedCommandIndex.value - 1, 0);
-      event.preventDefault();
-    } else if (event.key === 'Enter') {
-      executeCommand(filteredCommands.value[selectedCommandIndex.value]);
-      event.preventDefault();
-    } else if (event.key === 'Escape') {
-      closeCommandPalette();
-      event.preventDefault();
-    }
+    return; // Let handlePaletteKeydown handle it
+  }
+
+  // Open command palette
+  if (event.key === '/') {
+    showCommandPalette.value = true;
+    commandQuery.value = '';
+    selectedCommandIndex.value = 0;
+    event.preventDefault();
+    nextTick(() => {
+      paletteInputRef.value?.focus();
+    });
     return;
   }
 
   // Normal editor navigation
   if (cursor.value.zone === 'text') {
     handleTextNavigation(event);
-  } else if (cursor.value.zone === 'matrix') {
-    handleMatrixNavigation(event);
   }
+  // Matrix navigation is handled by MatrixBlock component
 }
 
 function handleTextNavigation(event: KeyboardEvent) {
@@ -258,16 +308,25 @@ function handleTextNavigation(event: KeyboardEvent) {
   } else if (event.key === 'ArrowDown') {
     if (currentLineIndex < document.value.length - 1) {
       const nextLine = document.value[currentLineIndex + 1];
-      cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+      
+      // If next line is matrix, enter it
+      if (nextLine.type === 'matrix') {
+        cursor.value = {
+          zone: 'matrix',
+          lineId: nextLine.id,
+          row: 0,
+          col: 0
+        };
+      } else {
+        cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+      }
     }
-    event.preventDefault();
-  } else if (event.key === '/') {
-    showCommandPalette.value = true;
-    commandQuery.value = '';
-    selectedCommandIndex.value = 0;
     event.preventDefault();
   } else if (event.key === 'Enter') {
     insertNewLine();
+    event.preventDefault();
+  } else if (event.key === 'Backspace') {
+    deleteCharAtCursor();
     event.preventDefault();
   } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
     insertCharAtCursor(event.key);
@@ -275,48 +334,111 @@ function handleTextNavigation(event: KeyboardEvent) {
   }
 }
 
-function handleMatrixNavigation(event: KeyboardEvent) {
-  if (cursor.value.zone !== 'matrix') return;
-  
-  const matrix = notesStore.getLineById(cursor.value.lineId) as MatrixLine;
+function handleMatrixKeydown(lineId: string, event: { row: number, col: number, key: KeyboardEvent }) {
+  const matrix = notesStore.getLineById(lineId) as MatrixLine;
+  const { row, col, key: keyEvent } = event;
 
-  if (event.key === 'ArrowLeft') {
-    if (cursor.value.col > 0) {
-      cursor.value = { ...cursor.value, col: cursor.value.col - 1 };
+  if (keyEvent.key === 'ArrowRight') {
+    if (col < matrix.cols - 1) {
+      cursor.value = { zone: 'matrix', lineId, row, col: col + 1 };
+    } else if (row < matrix.rows - 1) {
+      cursor.value = { zone: 'matrix', lineId, row: row + 1, col: 0 };
+    } else {
+      // Exit to next line
+      exitMatrixToNextLine(lineId);
     }
-    event.preventDefault();
-  } else if (event.key === 'ArrowRight') {
-    if (cursor.value.col < matrix.cols - 1) {
-      cursor.value = { ...cursor.value, col: cursor.value.col + 1 };
+  } else if (keyEvent.key === 'ArrowLeft') {
+    if (col > 0) {
+      cursor.value = { zone: 'matrix', lineId, row, col: col - 1 };
+    } else if (row > 0) {
+      cursor.value = { zone: 'matrix', lineId, row: row - 1, col: matrix.cols - 1 };
+    } else {
+      // Exit to previous line
+      exitMatrixToPreviousLine(lineId);
     }
+  } else if (keyEvent.key === 'ArrowDown') {
+    if (row < matrix.rows - 1) {
+      cursor.value = { zone: 'matrix', lineId, row: row + 1, col };
+    } else {
+      // Exit to next line
+      exitMatrixToNextLine(lineId);
+    }
+  } else if (keyEvent.key === 'ArrowUp') {
+    if (row > 0) {
+      cursor.value = { zone: 'matrix', lineId, row: row - 1, col };
+    } else {
+      // Exit to previous line
+      exitMatrixToPreviousLine(lineId);
+    }
+  } else if (keyEvent.key === 'Escape') {
+    exitMatrixToNextLine(lineId);
+  } else if (keyEvent.key === 'Enter') {
+    if (row < matrix.rows - 1) {
+      cursor.value = { zone: 'matrix', lineId, row: row + 1, col };
+    } else {
+      exitMatrixToNextLine(lineId);
+    }
+  } else if (keyEvent.key === 'Tab') {
+    if (col < matrix.cols - 1) {
+      cursor.value = { zone: 'matrix', lineId, row, col: col + 1 };
+    } else {
+      exitMatrixToNextLine(lineId);
+    }
+    keyEvent.preventDefault();
+  }
+}
+
+function exitMatrixToNextLine(lineId: string) {
+  const lineIndex = notesStore.getLineIndex(lineId);
+  const nextLineIndex = lineIndex + 1;
+
+  if (nextLineIndex < document.value.length) {
+    const nextLine = document.value[nextLineIndex];
+    cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
+  } else {
+    // Create new line
+    const newLine: TextLine = {
+      id: generateId(),
+      type: 'text',
+      content: [{ type: 'text', value: '' }]
+    };
+    if (notesStore.activeNote) {
+      notesStore.activeNote.content.push(newLine);
+      updateDocument();
+      cursor.value = { zone: 'text', lineId: newLine.id, charOffset: 0 };
+    }
+  }
+}
+
+function exitMatrixToPreviousLine(lineId: string) {
+  const lineIndex = notesStore.getLineIndex(lineId);
+  const prevLineIndex = lineIndex - 1;
+
+  if (prevLineIndex >= 0) {
+    const prevLine = document.value[prevLineIndex];
+    cursor.value = { zone: 'text', lineId: prevLine.id, charOffset: 0 };
+  }
+}
+
+function handlePaletteKeydown(event: KeyboardEvent) {
+  if (event.key === 'ArrowDown') {
+    selectedCommandIndex.value = Math.min(selectedCommandIndex.value + 1, filteredCommands.value.length - 1);
     event.preventDefault();
   } else if (event.key === 'ArrowUp') {
-    if (cursor.value.row > 0) {
-      cursor.value = { ...cursor.value, row: cursor.value.row - 1 };
-    }
+    selectedCommandIndex.value = Math.max(selectedCommandIndex.value - 1, 0);
     event.preventDefault();
-  } else if (event.key === 'ArrowDown') {
-    if (cursor.value.row < matrix.rows - 1) {
-      cursor.value = { ...cursor.value, row: cursor.value.row + 1 };
+  } else if (event.key === 'Enter') {
+    if (filteredCommands.value[selectedCommandIndex.value]) {
+      executeCommand(filteredCommands.value[selectedCommandIndex.value]);
     }
     event.preventDefault();
   } else if (event.key === 'Escape') {
-    // Exit matrix
-    const lineIndex = notesStore.getLineIndex(cursor.value.lineId);
-    if (lineIndex < document.value.length - 1) {
-      const nextLine = document.value[lineIndex + 1];
-      cursor.value = { zone: 'text', lineId: nextLine.id, charOffset: 0 };
-    }
+    closeCommandPalette();
     event.preventDefault();
   }
 }
 
-function handleCommandInput(event: KeyboardEvent) {
-  // Let v-model handle typing
-}
-
 function handleEditorClick(event: MouseEvent) {
-  // Focus editor
   editorRef.value?.focus();
 }
 
@@ -389,7 +511,7 @@ function insertNewLine() {
 
 function insertCharAtCursor(char: string) {
   if (cursor.value.zone !== 'text') return;
-  
+
   const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine;
   if (!currentLine || currentLine.type !== 'text') return;
 
@@ -403,6 +525,20 @@ function insertCharAtCursor(char: string) {
 
   cursor.value = { ...cursor.value, charOffset: cursor.value.charOffset + 1 };
   updateDocument();
+}
+
+function deleteCharAtCursor() {
+  if (cursor.value.zone !== 'text') return;
+
+  const currentLine = notesStore.getLineById(cursor.value.lineId) as TextLine;
+  if (!currentLine || currentLine.type !== 'text') return;
+
+  const lastSegment = currentLine.content[currentLine.content.length - 1];
+  if (lastSegment?.type === 'text' && lastSegment.value.length > 0) {
+    lastSegment.value = lastSegment.value.slice(0, -1);
+    cursor.value = { ...cursor.value, charOffset: Math.max(0, cursor.value.charOffset - 1) };
+    updateDocument();
+  }
 }
 
 function deleteCurrentLine() {
@@ -452,6 +588,7 @@ function executeCommand(cmd: Command) {
 function closeCommandPalette() {
   showCommandPalette.value = false;
   commandQuery.value = '';
+  editorRef.value?.focus();
 }
 
 function createNewNote() {
@@ -459,7 +596,6 @@ function createNewNote() {
 }
 
 function updateNoteTitle() {
-  // Auto-saved via v-model binding
   if (notesStore.activeNote) {
     notesStore.activeNote.updatedAt = Date.now();
   }
@@ -566,6 +702,7 @@ function generateId(): string {
 .editor-container {
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .editor-header {
@@ -587,44 +724,149 @@ function generateId(): string {
 .editor {
   flex: 1;
   padding: var(--spacing-xl);
+  padding-left: 60px; /* Space for line numbers */
   overflow-y: auto;
   font-family: var(--font-mono);
   font-size: var(--font-size-md);
   line-height: 1.8;
   outline: none;
+  position: relative;
 }
 
+/* CRITICAL: Container line with visual indicators */
 .container-line {
-  margin-bottom: var(--spacing-md);
+  display: block;
   min-height: 32px;
+  padding: 4px 8px;
+  margin: 2px 0;
+  position: relative;
+  border-left: 3px solid transparent;
+  transition: all 0.2s;
+  background: transparent;
 }
 
+.container-line:hover {
+  background: rgba(0, 0, 0, 0.02);
+  border-left: 3px solid rgba(100, 150, 255, 0.3);
+}
+
+.container-line.active {
+  background: rgba(100, 150, 255, 0.08);
+  border-left: 3px solid #2196F3;
+}
+
+/* Line numbers */
+.container-line::before {
+  content: attr(data-line-number);
+  position: absolute;
+  left: -48px;
+  top: 4px;
+  font-size: 12px;
+  color: #999;
+  width: 32px;
+  text-align: right;
+  user-select: none;
+}
+
+/* CRITICAL: Text block is INLINE */
 .text-block {
+  display: inline;
   margin: 0;
-  padding: var(--spacing-xs);
+  padding: 0;
+  line-height: 1.6;
   color: var(--color-text-primary);
   white-space: pre-wrap;
   word-wrap: break-word;
 }
 
+/* Symbol is truly inline */
 .symbol {
+  display: inline;
   color: var(--color-accent);
   font-weight: 600;
+  font-size: 18px;
   margin: 0 2px;
 }
 
-.cursor-indicator {
-  display: inline-block;
-  width: 2px;
-  height: 1.2em;
-  background: var(--color-accent);
-  animation: blink 1s infinite;
-  margin-left: 2px;
+/* INLINE Command Palette (VS Code style) */
+.command-palette-inline {
+  position: absolute;
+  z-index: 1000;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  min-width: 400px;
+  max-height: 400px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+.palette-header-inline {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
+  background: #f9f9f9;
+}
+
+.palette-icon {
+  font-size: 16px;
+  color: #999;
+  margin-right: 8px;
+}
+
+.palette-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 14px;
+  background: transparent;
+  font-family: var(--font-mono);
+}
+
+.palette-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.palette-item:hover,
+.palette-item.selected {
+  background: #e3f2fd;
+}
+
+.cmd-icon {
+  font-size: 18px;
+  margin-right: 12px;
+  min-width: 24px;
+  text-align: center;
+}
+
+.cmd-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.cmd-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.cmd-desc {
+  font-size: 12px;
+  color: #999;
+  margin-top: 2px;
 }
 
 /* RIGHT SIDEBAR */
@@ -634,66 +876,6 @@ function generateId(): string {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-}
-
-.command-search {
-  padding: var(--spacing-md);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.command-input {
-  width: 100%;
-  padding: var(--spacing-sm);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  font-family: var(--font-mono);
-  outline: none;
-}
-
-.command-palette {
-  border-bottom: 1px solid var(--color-border);
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.palette-header {
-  padding: var(--spacing-sm) var(--spacing-md);
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  text-transform: uppercase;
-}
-
-.command-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.command-item {
-  padding: var(--spacing-sm) var(--spacing-md);
-  cursor: pointer;
-  border-bottom: 1px solid var(--color-border);
-  transition: background var(--transition-fast);
-}
-
-.command-item:hover,
-.command-item.selected {
-  background: var(--color-accent-light);
-}
-
-.cmd-name {
-  display: block;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin-bottom: var(--spacing-xs);
-}
-
-.cmd-desc {
-  display: block;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
 }
 
 .keypad {
@@ -733,5 +915,31 @@ function generateId(): string {
   background: var(--color-accent-light);
   border-color: var(--color-accent);
   transform: scale(1.05);
+}
+
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.shortcut-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.shortcut-item kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 </style>
