@@ -1,4 +1,4 @@
-/* MathWriter Global Styles */
+/* MathWriter Global Styles - Desmos-Quality Mathematical Editor */
 
 :root {
   /* Spacing */
@@ -189,10 +189,14 @@ textarea::placeholder {
   color: var(--color-text-disabled);
 }
 
-/* KaTeX math rendering */
+/* ===================================================================
+   KaTeX RENDERING - DESMOS-QUALITY OVERRIDES
+   =================================================================== */
+
+/* Base KaTeX styling - professional math font */
 .katex {
-  font-size: 1em;
-  font-family: 'Cambria Math', 'TeX Gyre Termes', serif;
+  font-size: 1.1em;
+  font-family: 'KaTeX_Main', 'Cambria Math', 'Times New Roman', serif;
 }
 
 .katex-display {
@@ -201,10 +205,50 @@ textarea::placeholder {
   overflow-y: hidden;
 }
 
+/* CRITICAL: Large operators at natural Desmos-like size (2-2.5x) */
+.katex .op-symbol.large-op {
+  font-size: 2.4em !important;
+}
+
+.katex .op-symbol.small-op {
+  font-size: 1.4em;
+}
+
+/* Ensure displaystyle operators render large */
+.katex .mop.op-limits .vlist-t {
+  text-align: center;
+}
+
+/* Fraction styling - generous spacing */
+.katex .mfrac .frac-line {
+  border-bottom-width: 0.06em;
+}
+
+.katex .mfrac .vlist-t2 {
+  margin: 0;
+}
+
+/* Square root - clean rendering */
+.katex .sqrt > .root {
+  margin-left: 0.2em;
+}
+
+/* Make sure inline math doesn't get squeezed */
+.katex .base {
+  white-space: nowrap;
+}
+
+/* Proper vertical alignment for inline math */
+.katex-html {
+  white-space: nowrap;
+}
+
+/* Math expression container */
 .math-expression {
   font-size: 16px;
 }
 
+/* Dark theme KaTeX */
 [data-theme='dark'] .katex {
   color: #e9ecef;
 }
@@ -213,34 +257,36 @@ textarea::placeholder {
   color: #e9ecef;
 }
 
-/* Utility classes */
-.text-secondary {
-  color: var(--color-text-secondary);
+[data-theme='dark'] .katex .mfrac .frac-line {
+  border-color: #e9ecef;
 }
 
-.text-tertiary {
-  color: var(--color-text-tertiary);
+/* ===================================================================
+   MATH TEMPLATE RENDERING - Inline equation quality
+   =================================================================== */
+
+/* Ensure math templates flow inline and don't constrain operator size */
+.math-template .katex {
+  font-size: 1.1em;
 }
 
-.text-sm {
-  font-size: var(--font-size-sm);
+/* Large operators in templates get full Desmos sizing */
+.math-template.is-large-operator .katex .op-symbol.large-op {
+  font-size: 2.6em !important;
 }
 
-.text-lg {
-  font-size: var(--font-size-lg);
+.math-template.is-large-operator .katex .op-limits > .vlist-t > .vlist-r > .vlist {
+  font-size: 0.85em;
 }
 
-.font-mono {
-  font-family: var(--font-mono);
+/* Lines containing large operators expand to fit */
+.container-line {
+  line-height: normal;
 }
 
-.truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Dark theme - Command Palette */
+/* ===================================================================
+   DARK THEME - Command Palette
+   =================================================================== */
 [data-theme='dark'] .command-palette {
   background: #2a2d31;
   border-color: #404249;
@@ -284,4 +330,31 @@ textarea::placeholder {
 
 [data-theme='dark'] .cmd-desc {
   color: #949ba4;
+}
+
+/* Utility classes */
+.text-secondary {
+  color: var(--color-text-secondary);
+}
+
+.text-tertiary {
+  color: var(--color-text-tertiary);
+}
+
+.text-sm {
+  font-size: var(--font-size-sm);
+}
+
+.text-lg {
+  font-size: var(--font-size-lg);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

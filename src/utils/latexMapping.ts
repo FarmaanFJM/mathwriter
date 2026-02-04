@@ -1,5 +1,6 @@
 import type { MathExpressionLine } from '../types/editor'
 
+// Legacy symbol-to-LaTeX mapping (kept for backward compatibility with MathExpressionLine)
 export const symbolToLatex: Record<string, string> = {
   sigma: '\\displaystyle \\Sigma',
   sum: '\\displaystyle \\sum',
