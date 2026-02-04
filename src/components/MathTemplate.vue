@@ -5,27 +5,10 @@
       'is-active': isAnySlotActive,
       'is-large-operator': template?.isLargeOperator,
     }"
-    @click.stop="handleClick"
+    @click.stop="handleSlotClick"
   >
     <!-- Rendered KaTeX output -->
-    <span class="math-template-render" ref="renderContainer"></span>
-
-    <!-- Slot overlay buttons (positioned over the rendered output) -->
-    <span
-      v-for="slot in slotPositions"
-      :key="slot.name"
-      class="slot-overlay"
-      :class="{
-        'is-active-slot': activeSlotName === slot.name,
-        'is-empty': !span.slotValues[slot.name],
-      }"
-      :style="slot.style"
-      :data-slot-name="slot.name"
-      @click.stop="$emit('focusSlot', span.id, slot.name)"
-    >
-      <!-- When editing this slot, show input indicator -->
-      <span v-if="activeSlotName === slot.name" class="slot-caret"></span>
-    </span>
+    <span class="math-template-render" ref="renderContainer" @click.stop="handleSlotClick"></span>
   </span>
 </template>
 
@@ -34,7 +17,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import type { MathTemplateSpan } from '../types/editor'
-import { mathTemplates, compileTemplate, type SlotDefinition } from '../utils/mathTemplates'
+import { mathTemplates } from '../utils/mathTemplates'
 
 interface Props {
   span: MathTemplateSpan
@@ -43,7 +26,7 @@ interface Props {
 
 const props = defineProps<Props>()
 
-defineEmits<{
+const emit = defineEmits<{
   focusSlot: [spanId: string, slotName: string]
 }>()
 
@@ -61,35 +44,19 @@ const compiledLatex = computed(() => {
   const values: Record<string, string> = {}
   for (const slot of template.value.slots) {
     const val = props.span.slotValues[slot.name] || ''
-    if (props.activeSlotName === slot.name) {
-      // Show placeholder with cursor indicator when editing empty slot
-      if (!val) {
-        values[slot.name] = `\\textcolor{#4dabf7}{\\text{${slot.placeholder}}}`
-      } else {
-        values[slot.name] = val
-      }
-    } else {
-      if (!val) {
-        values[slot.name] = `\\textcolor{#adb5bd}{\\text{${slot.placeholder}}}`
-      } else {
-        values[slot.name] = val
-      }
-    }
+    const isActive = props.activeSlotName === slot.name
+    const isPlaceholder = !val
+    const slotContent = val ? val : `\\text{${slot.placeholder}}`
+    const slotClasses = [
+      'slot-hit',
+      `slot-${slot.name}`,
+      isActive ? 'slot-active' : '',
+      isPlaceholder ? 'slot-placeholder' : ''
+    ].filter(Boolean).join(' ')
+    values[slot.name] = `\\htmlClass{${slotClasses}}{${slotContent}}`
   }
 
   return template.value.compile(values)
-})
-
-// Slot hit regions (simplified: we use the whole template as click target
-// and let the parent determine which slot to focus based on template layout)
-const slotPositions = computed(() => {
-  if (!template.value) return []
-  // We return slot definitions - actual positioning handled by CSS overlay
-  return template.value.slots.map((slot: SlotDefinition) => ({
-    name: slot.name,
-    placeholder: slot.placeholder,
-    style: {} // positioned via CSS flow
-  }))
 })
 
 function renderMath() {
@@ -114,11 +81,25 @@ watch(compiledLatex, () => {
   nextTick(() => renderMath())
 })
 
-function handleClick(event: MouseEvent) {
-  // If no slot is active, focus the first slot
+function handleSlotClick(event: MouseEvent) {
   if (!template.value) return
-  // Determine which slot to focus based on click position
-  // For simplicity, if clicking the template and no slot is active, focus first slot
+  const target = event.target as HTMLElement
+  const slotEl = target.closest('.slot-hit') as HTMLElement | null
+  if (slotEl) {
+    const slotClass = Array.from(slotEl.classList).find((cls) => cls.startsWith('slot-') && cls !== 'slot-hit' && cls !== 'slot-active' && cls !== 'slot-placeholder')
+    if (slotClass) {
+      const slotName = slotClass.replace('slot-', '')
+      if (slotName) {
+        emit('focusSlot', props.span.id, slotName)
+        return
+      }
+    }
+  }
+  const bodySlot = template.value.slots.find((slot) => slot.name === 'body')
+  const fallbackSlot = bodySlot ?? template.value.slots[0]
+  if (fallbackSlot) {
+    emit('focusSlot', props.span.id, fallbackSlot.name)
+  }
 }
 </script>
 
@@ -127,22 +108,21 @@ function handleClick(event: MouseEvent) {
   display: inline-flex;
   align-items: center;
   position: relative;
-  cursor: pointer;
+  cursor: text;
   user-select: none;
   vertical-align: middle;
   padding: 0 2px;
-  border-radius: 3px;
-  transition: background 0.15s;
+  border-radius: 0;
+  transition: none;
 }
 
 .math-template:hover {
-  background: rgba(77, 171, 247, 0.06);
+  background: transparent;
 }
 
 .math-template.is-active {
-  background: rgba(77, 171, 247, 0.1);
-  outline: 1.5px solid rgba(77, 171, 247, 0.3);
-  outline-offset: 1px;
+  background: transparent;
+  outline: none;
 }
 
 .math-template.is-large-operator {
@@ -152,47 +132,36 @@ function handleClick(event: MouseEvent) {
 
 .math-template-render {
   display: inline-block;
-  line-height: 1;
+  line-height: normal;
 }
 
 /* Large operator sizing - 2-2.5x */
-.math-template.is-large-operator :deep(.katex) {
-  font-size: 1.1em;
-}
-
-.math-template.is-large-operator :deep(.katex .op-symbol.large-op) {
-  font-size: 2.4em !important;
-}
-
 .math-template.is-large-operator :deep(.katex .op-limits > .vlist-t) {
   font-size: 1em;
 }
 
-/* Slot overlay - invisible click targets */
-.slot-overlay {
-  position: absolute;
+/* Slot styling */
+.math-template :deep(.slot-hit) {
   cursor: text;
-  z-index: 1;
-  /* These are invisible by default - just hit targets */
-  opacity: 0;
-  pointer-events: none;
 }
 
-.slot-overlay.is-active-slot {
-  opacity: 1;
-  pointer-events: auto;
+.math-template :deep(.slot-placeholder) {
+  color: var(--color-text-tertiary);
 }
 
-.slot-caret {
+.math-template :deep(.slot-active) {
+  position: relative;
+}
+
+.math-template :deep(.slot-active)::after {
+  content: '';
   display: inline-block;
-  width: 1.5px;
+  width: 1px;
   height: 1em;
-  background: #2196F3;
+  background: var(--color-text-primary);
+  margin-left: 1px;
   animation: slotBlink 1s infinite;
-  position: absolute;
-  right: -1px;
-  top: 50%;
-  transform: translateY(-50%);
+  vertical-align: -2px;
 }
 
 @keyframes slotBlink {
@@ -202,11 +171,11 @@ function handleClick(event: MouseEvent) {
 
 /* Dark theme */
 [data-theme='dark'] .math-template:hover {
-  background: rgba(77, 171, 247, 0.08);
+  background: transparent;
 }
 
 [data-theme='dark'] .math-template.is-active {
-  background: rgba(77, 171, 247, 0.15);
-  outline-color: rgba(77, 171, 247, 0.4);
+  background: transparent;
+  outline-color: transparent;
 }
 </style>
