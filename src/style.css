@@ -189,6 +189,30 @@ textarea::placeholder {
   color: var(--color-text-disabled);
 }
 
+/* KaTeX math rendering */
+.katex {
+  font-size: 1em;
+  font-family: 'Cambria Math', 'TeX Gyre Termes', serif;
+}
+
+.katex-display {
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.math-expression {
+  font-size: 16px;
+}
+
+[data-theme='dark'] .katex {
+  color: #e9ecef;
+}
+
+[data-theme='dark'] .katex-html {
+  color: #e9ecef;
+}
+
 /* Utility classes */
 .text-secondary {
   color: var(--color-text-secondary);
@@ -214,15 +238,6 @@ textarea::placeholder {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* KaTeX styles */
-.katex-display {
-  margin: var(--spacing-md) 0;
-}
-
-.katex {
-  font-size: 1.1em;
 }
 
 /* Dark theme - Command Palette */
