@@ -67,3 +67,5 @@ Component-scoped override now matches global KaTeX matrix alignment behavior.
   - Changed `align-items: flex-start` (from baseline alignment in prior behavior) so inline matrix brackets and grid start at the same top edge in the editor row flow.
 
 This targets the remaining visual offset shown in inspection overlays for inline matrix rendering.
+
+- **Insertion/render safeguard:** Updated inline matrix bindings in `src/components/MathWriter.vue` to force `alignItems: "flex-start"` in both inline token and matrix-line `:style` objects, ensuring runtime-applied inline styles cannot fall back to baseline alignment.
