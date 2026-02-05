@@ -162,11 +162,14 @@ function handleEditorKeydown(event: KeyboardEvent) {
 }
 
 .math-render :deep(.katex),
-.math-render :deep(.katex *),
 .math-render :deep(.katex .array),
 .math-render :deep(.katex .array td) {
   font-size: inherit;
   font-family: inherit;
+}
+
+.math-render :deep(.katex .array td) {
+  vertical-align: middle;
 }
 
 .math-render :deep(.katex .array) {

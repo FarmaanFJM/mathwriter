@@ -133,7 +133,7 @@
                 v-else-if="token.type === 'symbol'"
                 class="symbol-inline"
                 :class="{ 'is-selected': isOffsetSelected(line.id, token.offset) }"
-                :style="getSegmentStyle(token.segment)"
+                :style="{ ...getSegmentStyle(token.segment), alignItems: 'flex-start' }"
                 :data-latex="(token.segment as SymbolSpan).latex"
                 @mousedown.stop="startSelection(line.id, token.offset)"
                 @mousemove.stop="updateSelection(line.id, token.offset + 1)"
@@ -157,7 +157,7 @@
               <!-- Inline matrix segment -->
               <span v-else-if="token.type === 'matrix'" class="matrix-inline"
                 :class="{ 'is-selected': isOffsetSelected(line.id, token.offset) }"
-                :style="getSegmentStyle(token.segment)"
+                :style="{ ...getSegmentStyle(token.segment), alignItems: 'flex-start' }"
                 @mousedown.capture="startSelection(line.id, token.offset)"
                 @mousemove.capture="updateSelection(line.id, token.offset + 1)">
                 <span class="matrix-bracket bracket-left" :style="{ height: bracketHeight(token.segment as MatrixSpan) }">
@@ -217,7 +217,7 @@
             v-else-if="line.type === 'matrix'"
             class="matrix-inline"
             :class="{ 'is-editing': cursor.zone === 'matrix' && cursor.lineId === line.id }"
-            :style="getLineStyle(line as MatrixLine)"
+            :style="{ ...getLineStyle(line as MatrixLine), alignItems: 'flex-start' }"
             @click.stop="focusMatrixCell(line.id, line.id, 0, 0)"
           >
             <div class="matrix-bracket bracket-left" :style="{ height: bracketHeight(line as MatrixLine) }">
@@ -2557,7 +2557,7 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
 /* CRITICAL: Matrix is INLINE - flows with text */
 .matrix-inline {
   display: inline-flex;
-  align-items: baseline;
+  align-items: flex-start !important;
   gap: var(--math-matrix-gap-inline);
   vertical-align: baseline;
   margin: 0 var(--math-matrix-padding-inline);
