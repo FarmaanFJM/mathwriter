@@ -58,3 +58,12 @@ Component-scoped override now matches global KaTeX matrix alignment behavior.
 3. Render `\int_a^b f(x)\,dx` in display mode and confirm integral size is balanced against bounds.
 4. Validate at 90%, 100%, 110%, and 125% zoom for stable alignment.
 5. Re-check in Chromium and one additional browser engine where available.
+
+
+## Follow-up adjustment from review feedback
+
+- **File:** `src/components/MathWriter.vue`
+  - Selector: `.matrix-inline`
+  - Changed `align-items: flex-start` (from baseline alignment in prior behavior) so inline matrix brackets and grid start at the same top edge in the editor row flow.
+
+This targets the remaining visual offset shown in inspection overlays for inline matrix rendering.

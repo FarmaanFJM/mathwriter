@@ -2557,7 +2557,7 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
 /* CRITICAL: Matrix is INLINE - flows with text */
 .matrix-inline {
   display: inline-flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: var(--math-matrix-gap-inline);
   vertical-align: baseline;
   margin: 0 var(--math-matrix-padding-inline);
