@@ -15,6 +15,14 @@ export interface TextLine extends LineElement {
 export interface TextSpan {
   type: 'text'
   value: string
+  format?: TextFormat
+}
+
+export interface TextFormat {
+  fontSize?: number
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
 }
 
 export interface SymbolSpan {
@@ -22,6 +30,7 @@ export interface SymbolSpan {
   value: string
   display: string
   latex?: string
+  format?: TextFormat
 }
 
 export interface MatrixSpan {
@@ -30,6 +39,7 @@ export interface MatrixSpan {
   rows: number
   cols: number
   data: string[][]
+  format?: TextFormat
 }
 
 // NEW: Inline math template with editable slots
@@ -38,6 +48,7 @@ export interface MathTemplateSpan {
   type: 'mathTemplate'
   templateId: string           // reference to mathTemplates registry
   slotValues: Record<string, string>  // current values for each slot
+  format?: TextFormat
 }
 
 // Matrix line
@@ -46,6 +57,7 @@ export interface MatrixLine extends LineElement {
   rows: number
   cols: number
   data: string[][]  // 2D array of cell values
+  format?: TextFormat
 }
 
 export interface MathExpressionLine extends LineElement {
@@ -53,6 +65,7 @@ export interface MathExpressionLine extends LineElement {
   latex: string
   raw?: string
   displayMode: boolean
+  format?: TextFormat
 }
 
 // Document is array of lines

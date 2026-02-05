@@ -39,7 +39,7 @@
             type="button"
             class="toolbar-btn"
             :class="{ active: editorStore.isBold }"
-            @click="editorStore.toggleBold()"
+            @click="toggleBold"
             aria-label="Toggle bold"
             title="Bold"
           >
@@ -49,7 +49,7 @@
             type="button"
             class="toolbar-btn"
             :class="{ active: editorStore.isItalic }"
-            @click="editorStore.toggleItalic()"
+            @click="toggleItalic"
             aria-label="Toggle italic"
             title="Italic"
           >
@@ -59,7 +59,7 @@
             type="button"
             class="toolbar-btn"
             :class="{ active: editorStore.isUnderline }"
-            @click="editorStore.toggleUnderline()"
+            @click="toggleUnderline"
             aria-label="Toggle underline"
             title="Underline"
           >
@@ -97,6 +97,7 @@
         class="editor-display"
         :style="editorDisplayStyle"
         @click="handleDisplayClick"
+        @mouseup="stopSelection"
       >
         <!-- Render document as pure HTML -->
         <div
@@ -119,6 +120,10 @@
               <span
                 v-else-if="token.type === 'char'"
                 class="text-char"
+                :class="{ 'is-selected': isOffsetSelected(line.id, token.offset) }"
+                :style="getTextTokenStyle(line as TextLine, token)"
+                @mousedown.stop="startSelection(line.id, token.offset)"
+                @mouseenter.stop="updateSelection(line.id, token.offset + 1)"
                 @click.stop="setCursorAtOffset(line.id, token.offset + 1)"
               >{{ token.value }}</span>
 
@@ -126,7 +131,11 @@
               <span
                 v-else-if="token.type === 'symbol'"
                 class="symbol-inline"
+                :class="{ 'is-selected': isOffsetSelected(line.id, token.offset) }"
+                :style="getSegmentStyle(token.segment)"
                 :data-latex="(token.segment as SymbolSpan).latex"
+                @mousedown.stop="startSelection(line.id, token.offset)"
+                @mouseenter.stop="updateSelection(line.id, token.offset + 1)"
                 @click.stop="setCursorAtOffset(line.id, token.offset + 1)"
               >
                 <span class="symbol-render" :ref="(el) => registerSymbolRef(line.id, token.segmentIndex, el as HTMLElement)"></span>
@@ -136,12 +145,20 @@
               <MathTemplate
                 v-else-if="token.type === 'mathTemplate'"
                 :span="(token.segment as MathTemplateSpan)"
+                :class="{ 'is-selected': isOffsetSelected(line.id, token.offset) }"
+                :style="getSegmentStyle(token.segment)"
                 :active-slot-name="getActiveSlotName(line.id, (token.segment as MathTemplateSpan).id)"
+                @mousedown.stop="startSelection(line.id, token.offset)"
+                @mouseenter.stop="updateSelection(line.id, token.offset + 1)"
                 @focus-slot="(spanId, slotName) => focusMathTemplateSlot(line.id, spanId, slotName)"
               />
 
               <!-- Inline matrix segment -->
-              <span v-else-if="token.type === 'matrix'" class="matrix-inline">
+              <span v-else-if="token.type === 'matrix'" class="matrix-inline"
+                :class="{ 'is-selected': isOffsetSelected(line.id, token.offset) }"
+                :style="getSegmentStyle(token.segment)"
+                @mousedown.stop="startSelection(line.id, token.offset)"
+                @mouseenter.stop="updateSelection(line.id, token.offset + 1)">
                 <span class="matrix-bracket bracket-left" :style="{ height: bracketHeight(token.segment as MatrixSpan) }">
                   <svg viewBox="0 0 20 100" preserveAspectRatio="none">
                     <path d="M 15 0 L 5 0 L 5 100 L 15 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
@@ -187,6 +204,7 @@
             <MathExpression
               :line="line as MathExpressionLine"
               :is-active="cursor.lineId === line.id"
+              :style="getLineStyle(line as MathExpressionLine)"
               @focus="focusMathExpression(line.id)"
               @update="updateMathLatex(line.id, $event)"
               @blur="blurMathExpression"
@@ -198,6 +216,7 @@
             v-else-if="line.type === 'matrix'"
             class="matrix-inline"
             :class="{ 'is-editing': cursor.zone === 'matrix' && cursor.lineId === line.id }"
+            :style="getLineStyle(line as MatrixLine)"
             @click.stop="focusMatrixCell(line.id, line.id, 0, 0)"
           >
             <div class="matrix-bracket bracket-left" :style="{ height: bracketHeight(line as MatrixLine) }">
@@ -403,7 +422,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useNotesStore } from '../stores/notesStore'
 import { useEditorStore } from '../stores/editorStore'
 import katex from 'katex'
@@ -413,7 +432,7 @@ import MathTemplate from './MathTemplate.vue'
 import { mathTemplates, inlineSymbols } from '../utils/mathTemplates'
 import type {
   CursorPosition, TextLine, TextSpan, SymbolSpan, MatrixLine,
-  MatrixSpan, MathExpressionLine, MathTemplateSpan, Command
+  MatrixSpan, MathExpressionLine, MathTemplateSpan, Command, TextFormat
 } from '../types/editor'
 
 const notesStore = useNotesStore()
@@ -436,19 +455,53 @@ const showCommandPalette = ref(false)
 const selectedCommandIndex = ref(0)
 
 const fontSizes = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32]
+const isSelecting = ref(false)
+const selectionAnchor = ref<{ lineId: string, offset: number } | null>(null)
 
 const editorDisplayStyle = computed(() => ({
-  fontSize: `${editorStore.currentFontSize}px`,
-  fontWeight: editorStore.isBold ? '700' : '400',
-  fontStyle: editorStore.isItalic ? 'italic' : 'normal',
-  textDecoration: editorStore.isUnderline ? 'underline' : 'none'
+  fontSize: `${editorStore.currentFontSize}px`
 }))
+
+function resolveBaseFormat(): TextFormat {
+  return {
+    fontSize: editorStore.currentFontSize,
+    bold: editorStore.isBold,
+    italic: editorStore.isItalic,
+    underline: editorStore.isUnderline
+  }
+}
+
+function toInlineStyle(format?: TextFormat) {
+  const merged: TextFormat = { ...resolveBaseFormat(), ...(format || {}) }
+  return {
+    fontSize: `${merged.fontSize ?? editorStore.currentFontSize}px`,
+    fontWeight: merged.bold ? '700' : '400',
+    fontStyle: merged.italic ? 'italic' : 'normal',
+    textDecoration: merged.underline ? 'underline' : 'none'
+  }
+}
 
 function updateFontSize(event: Event) {
   const value = Number((event.target as HTMLSelectElement).value)
   if (!Number.isNaN(value)) {
-    editorStore.setFontSize(value)
+    const patch = editorStore.setFontSize(value)
+    applyFormattingPatch(patch)
   }
+}
+
+function toggleBold() {
+  const patch = editorStore.toggleBold()
+  applyFormattingPatch(patch)
+}
+
+function toggleItalic() {
+  const patch = editorStore.toggleItalic()
+  applyFormattingPatch(patch)
+}
+
+function toggleUnderline() {
+  const patch = editorStore.toggleUnderline()
+  applyFormattingPatch(patch)
 }
 
 // Symbol rendering refs
@@ -556,8 +609,42 @@ onMounted(() => {
   nextTick(() => {
     hiddenInput.value?.focus()
   })
+  window.addEventListener('mouseup', stopSelection)
 })
 
+onUnmounted(() => {
+  window.removeEventListener('mouseup', stopSelection)
+})
+
+
+
+function getFormatAtOffset(line: TextLine, offset: number): TextFormat {
+  const target = getSegmentAtIndex(line, Math.max(0, offset))
+  if (!target) return resolveBaseFormat()
+  if (target.type === 'textChar') {
+    const seg = line.content[target.index] as TextSpan
+    return { ...resolveBaseFormat(), ...(seg.format || {}) }
+  }
+  return { ...resolveBaseFormat(), ...((target.segment as SymbolSpan | MatrixSpan | MathTemplateSpan).format || {}) }
+}
+
+watch([() => editorStore.selection, () => cursor.value], () => {
+  const selection = editorStore.selection
+  if (selection && selection.start !== selection.end) {
+    const line = notesStore.getLineById(selection.lineId) as TextLine | null
+    if (line && line.type === 'text') {
+      editorStore.setToolbarState(getFormatAtOffset(line, selection.start))
+    }
+    return
+  }
+
+  if (cursor.value.zone === 'text') {
+    const line = notesStore.getLineById(cursor.value.lineId) as TextLine | null
+    if (line && line.type === 'text') {
+      editorStore.setToolbarState(getFormatAtOffset(line, Math.max(0, cursor.value.charOffset - 1)))
+    }
+  }
+}, { deep: true })
 // Commands - expanded with templates
 const commands: Command[] = [
   // Templates (primary)
@@ -804,16 +891,35 @@ function handleKeydown(event: KeyboardEvent) {
       const currentCursor = cursor.value
       const data = getTemplateByCursor()
       if (data) {
+        const template = mathTemplates[data.span.templateId]
+        const slotIndex = template?.slots.findIndex(s => s.name === currentCursor.slotName) ?? -1
+
+        if (template?.isLargeOperator && slotIndex !== -1) {
+          if (slotIndex > 0) {
+            const prevSlot = template.slots[slotIndex - 1]
+            const prevVal = data.span.slotValues[prevSlot.name] || ''
+            cursor.value = {
+              zone: 'mathTemplate',
+              lineId: currentCursor.lineId,
+              templateSpanId: currentCursor.templateSpanId,
+              slotName: prevSlot.name,
+              slotOffset: prevVal.length
+            }
+          } else {
+            exitMathTemplateBefore()
+          }
+          event.preventDefault()
+          return
+        }
+
         if (currentCursor.slotOffset > 0) {
           cursor.value = { ...currentCursor, slotOffset: currentCursor.slotOffset - 1 }
         } else {
-          const template = mathTemplates[data.span.templateId]
           if (!template) {
             exitMathTemplateBefore()
             event.preventDefault()
             return
           }
-          const slotIndex = template.slots.findIndex(s => s.name === currentCursor.slotName)
           if (slotIndex > 0) {
             const prevSlot = template.slots[slotIndex - 1]
             const prevVal = data.span.slotValues[prevSlot.name] || ''
@@ -848,11 +954,29 @@ function handleKeydown(event: KeyboardEvent) {
           event.preventDefault()
           return
         }
+        const slotIndex = template.slots.findIndex(s => s.name === currentCursor.slotName)
+
+        if (template.isLargeOperator && slotIndex !== -1) {
+          if (slotIndex < template.slots.length - 1) {
+            const nextSlot = template.slots[slotIndex + 1]
+            cursor.value = {
+              zone: 'mathTemplate',
+              lineId: currentCursor.lineId,
+              templateSpanId: currentCursor.templateSpanId,
+              slotName: nextSlot.name,
+              slotOffset: 0
+            }
+          } else {
+            exitMathTemplate()
+          }
+          event.preventDefault()
+          return
+        }
+
         const val = data.span.slotValues[currentCursor.slotName] || ''
         if (currentCursor.slotOffset < val.length) {
           cursor.value = { ...currentCursor, slotOffset: currentCursor.slotOffset + 1 }
         } else {
-          const slotIndex = template.slots.findIndex(s => s.name === currentCursor.slotName)
           if (slotIndex < template.slots.length - 1) {
             const nextSlot = template.slots[slotIndex + 1]
             cursor.value = {
@@ -1066,6 +1190,7 @@ function deleteCharInSlot() {
 }
 
 function focusMathTemplateSlot(lineId: string, spanId: string, slotName: string) {
+  editorStore.clearSelection()
   const line = notesStore.getLineById(lineId) as TextLine | null
   if (!line || line.type !== 'text') return
   const span = line.content.find(
@@ -1302,11 +1427,11 @@ function insertCharAtCursor(char: string) {
     const seg = currentLine.content[target.index] as TextSpan
     seg.value = seg.value.slice(0, target.innerOffset) + char + seg.value.slice(target.innerOffset)
   } else if (target.type === 'before') {
-    currentLine.content.splice(target.index, 0, { type: 'text', value: char })
+    currentLine.content.splice(target.index, 0, { type: 'text', value: char, format: resolveBaseFormat() })
   } else if (target.type === 'after') {
-    currentLine.content.splice(target.index + 1, 0, { type: 'text', value: char })
+    currentLine.content.splice(target.index + 1, 0, { type: 'text', value: char, format: resolveBaseFormat() })
   } else {
-    currentLine.content.push({ type: 'text', value: char })
+    currentLine.content.push({ type: 'text', value: char, format: resolveBaseFormat() })
   }
 
   normalizeTextLine(currentLine)
@@ -1504,9 +1629,9 @@ function insertTemplate(templateId: string) {
     const before = seg.value.slice(0, target.innerOffset)
     const after = seg.value.slice(target.innerOffset)
     const segments: Array<TextSpan | MathTemplateSpan> = []
-    if (before) segments.push({ type: 'text', value: before })
+    if (before) segments.push({ type: 'text', value: before, format: seg.format })
     segments.push(templateSpan)
-    if (after) segments.push({ type: 'text', value: after })
+    if (after) segments.push({ type: 'text', value: after, format: seg.format })
     targetLine.content.splice(target.index, 1, ...segments)
   } else if (target.type === 'before') {
     targetLine.content.splice(target.index, 0, templateSpan)
@@ -1585,9 +1710,9 @@ function insertInlineSymbol(symbolId: string) {
     const before = seg.value.slice(0, target.innerOffset)
     const after = seg.value.slice(target.innerOffset)
     const segments: Array<TextSpan | SymbolSpan> = []
-    if (before) segments.push({ type: 'text', value: before })
+    if (before) segments.push({ type: 'text', value: before, format: seg.format })
     segments.push(symbolSpan)
-    if (after) segments.push({ type: 'text', value: after })
+    if (after) segments.push({ type: 'text', value: after, format: seg.format })
     targetLine.content.splice(target.index, 1, ...segments)
   } else if (target.type === 'before') {
     targetLine.content.splice(target.index, 0, symbolSpan)
@@ -1625,9 +1750,9 @@ function insertMatrix(rows: number, cols: number) {
       const before = seg.value.slice(0, target.innerOffset)
       const after = seg.value.slice(target.innerOffset)
       const segments: Array<TextSpan | MatrixSpan> = []
-      if (before) segments.push({ type: 'text', value: before })
+      if (before) segments.push({ type: 'text', value: before, format: seg.format })
       segments.push(matrixSpan)
-      if (after) segments.push({ type: 'text', value: after })
+      if (after) segments.push({ type: 'text', value: after, format: seg.format })
       currentLine.content.splice(target.index, 1, ...segments)
     } else if (target.type === 'before') {
       currentLine.content.splice(target.index, 0, matrixSpan)
@@ -1696,6 +1821,7 @@ function blurMathExpression() {
 }
 
 function focusMatrixCell(lineId: string, matrixId: string, row: number, col: number) {
+  editorStore.clearSelection()
   cursor.value = {
     zone: 'matrix',
     lineId,
@@ -1842,7 +1968,7 @@ function generateId(): string {
 
 type LineToken =
   | { type: 'caret'; key: string }
-  | { type: 'char'; key: string; value: string; offset: number }
+  | { type: 'char'; key: string; value: string; offset: number; segmentIndex: number }
   | { type: 'symbol' | 'mathTemplate' | 'matrix'; key: string; segment: SymbolSpan | MathTemplateSpan | MatrixSpan; segmentIndex: number; offset: number }
 
 function getLineLength(line: TextLine): number {
@@ -1860,6 +1986,7 @@ function getLineTokens(line: TextLine): LineToken[] {
           type: 'char',
           key: `${line.id}-char-${offset}`,
           value: value[i],
+          segmentIndex: segIndex,
           offset
         })
         offset += 1
@@ -1899,6 +2026,7 @@ function setCursorAtOffset(lineId: string, offset: number) {
     lineId,
     charOffset: clampedOffset
   }
+  editorStore.clearSelection()
   hiddenInput.value?.focus()
 }
 
@@ -1964,10 +2092,12 @@ function normalizeTextLine(line: TextLine) {
         continue
       }
       const last = normalized[normalized.length - 1]
-      if (last?.type === 'text') {
+      const currentFormat = JSON.stringify((seg as TextSpan).format || {})
+      const lastFormat = last?.type === 'text' ? JSON.stringify((last as TextSpan).format || {}) : ''
+      if (last?.type === 'text' && currentFormat === lastFormat) {
         (last as TextSpan).value += value
       } else {
-        normalized.push({ type: 'text', value })
+        normalized.push({ type: 'text', value, format: (seg as TextSpan).format })
       }
     } else {
       normalized.push(seg)
@@ -1979,6 +2109,108 @@ function normalizeTextLine(line: TextLine) {
   line.content = normalized
 }
 
+
+
+function getTextTokenStyle(line: TextLine, token: Extract<LineToken, { type: 'char' }>) {
+  const seg = line.content[token.segmentIndex]
+  if (seg?.type !== 'text') return toInlineStyle()
+  return toInlineStyle((seg as TextSpan).format)
+}
+
+function getSegmentStyle(segment: SymbolSpan | MathTemplateSpan | MatrixSpan) {
+  return toInlineStyle(segment.format)
+}
+
+function getLineStyle(line: MatrixLine | MathExpressionLine) {
+  return toInlineStyle(line.format)
+}
+
+function startSelection(lineId: string, offset: number) {
+  isSelecting.value = true
+  selectionAnchor.value = { lineId, offset }
+  editorStore.setSelection({ lineId, start: offset, end: offset })
+}
+
+function updateSelection(lineId: string, offset: number) {
+  if (!isSelecting.value || !selectionAnchor.value) return
+  if (selectionAnchor.value.lineId !== lineId) return
+  editorStore.setSelection({
+    lineId,
+    start: Math.min(selectionAnchor.value.offset, offset),
+    end: Math.max(selectionAnchor.value.offset, offset)
+  })
+}
+
+function stopSelection() {
+  isSelecting.value = false
+}
+
+function isOffsetSelected(lineId: string, offset: number): boolean {
+  const selection = editorStore.selection
+  if (!selection || selection.lineId !== lineId) return false
+  return offset >= selection.start && offset < selection.end
+}
+
+function applyFormattingPatch(patch: Partial<TextFormat>) {
+  const selection = editorStore.selection
+  if (!selection || selection.start === selection.end) {
+    return
+  }
+  const line = notesStore.getLineById(selection.lineId) as TextLine | null
+  if (!line || line.type !== 'text') return
+
+  let pos = 0
+  const nextContent: Array<TextSpan | SymbolSpan | MathTemplateSpan | MatrixSpan> = []
+
+  for (const segment of line.content) {
+    if (segment.type === 'text') {
+      const span = segment as TextSpan
+      const start = pos
+      const end = pos + span.value.length
+      const overlapStart = Math.max(selection.start, start)
+      const overlapEnd = Math.min(selection.end, end)
+
+      if (overlapStart >= overlapEnd) {
+        nextContent.push(span)
+      } else {
+        const beforeLength = overlapStart - start
+        const middleLength = overlapEnd - overlapStart
+        const afterLength = end - overlapEnd
+
+        if (beforeLength > 0) {
+          nextContent.push({ type: 'text', value: span.value.slice(0, beforeLength), format: span.format })
+        }
+
+        nextContent.push({
+          type: 'text',
+          value: span.value.slice(beforeLength, beforeLength + middleLength),
+          format: { ...(span.format || {}), ...patch }
+        })
+
+        if (afterLength > 0) {
+          nextContent.push({ type: 'text', value: span.value.slice(span.value.length - afterLength), format: span.format })
+        }
+      }
+
+      pos = end
+      continue
+    }
+
+    const unitStart = pos
+    const unitEnd = pos + 1
+    const overlaps = unitStart < selection.end && unitEnd > selection.start
+    if (overlaps) {
+      nextContent.push({ ...segment, format: { ...(segment.format || {}), ...patch } })
+    } else {
+      nextContent.push(segment)
+    }
+    pos = unitEnd
+  }
+
+  line.content = nextContent
+  normalizeTextLine(line)
+  updateDocument()
+}
 function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: number; end: number } | null {
   let offset = 0
   for (const seg of line.content) {
@@ -2239,6 +2471,14 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
   cursor: text;
 }
 
+
+
+.text-char.is-selected,
+.symbol-inline.is-selected,
+.matrix-inline.is-selected,
+.math-template.is-selected {
+  background: color-mix(in srgb, var(--color-accent, #4f46e5) 24%, transparent);
+}
 /* Inline symbol rendering (KaTeX) */
 .symbol-inline {
   display: inline-flex;
