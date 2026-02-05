@@ -127,7 +127,10 @@ function handleEditorKeydown(event: KeyboardEvent) {
   border-radius: 0;
   transition: all 0.15s;
   font-family: 'Cambria Math', 'TeX Gyre Termes', serif;
+  line-height: var(--math-row-line-height);
+  vertical-align: baseline;
 }
+
 
 .math-expression:hover {
   background: transparent;
@@ -147,29 +150,27 @@ function handleEditorKeydown(event: KeyboardEvent) {
 
 .math-expression.display-mode {
   display: block;
-  margin: 8px 0;
-  vertical-align: initial;
+  margin: 0.5em 0;
 }
 
 .math-render {
-  font-size: 16px;
-  line-height: 1.2;
-  min-height: 24px;
+  font-size: 1rem;
+  line-height: inherit;
+  min-height: 1.5em;
   display: inline-block;
   vertical-align: baseline;
 }
 
-.math-render :deep(.katex) {
-  vertical-align: baseline;
-}
-
-.math-render :deep(.katex .mfrac) {
-  vertical-align: middle;
+.math-render :deep(.katex),
+.math-render :deep(.katex *),
+.math-render :deep(.katex .array),
+.math-render :deep(.katex .array td) {
+  font-size: inherit;
+  font-family: inherit;
 }
 
 .math-render :deep(.katex .array) {
-  display: inline-table;
-  vertical-align: middle;
+  margin: 0;
 }
 
 .math-editor {

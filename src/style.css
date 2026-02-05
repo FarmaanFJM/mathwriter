@@ -23,6 +23,15 @@
   --font-size-xl: 24px;
   --line-height: 1.7;
 
+  /* Unified math typography scale */
+  --math-font-size-inline: 1em;
+  --math-font-size-display: 1.12em;
+  --math-font-size-symbol: 1.02em;
+  --math-font-size-line-number: 0.75rem;
+  --math-row-line-height: 1.75;
+  --math-matrix-gap-inline: 0.12em;
+  --math-matrix-padding-inline: 0.14em;
+
   /* Transitions */
   --transition-fast: 150ms ease;
   --transition-base: 200ms ease;
@@ -195,14 +204,15 @@ textarea::placeholder {
 
 /* Base KaTeX styling - professional math font */
 .katex {
-  font-size: 1.1em;
+  font-size: var(--math-font-size-inline);
   font-family: 'KaTeX_Main', 'Cambria Math', 'Times New Roman', serif;
 }
 
 .katex-display {
-  margin: 8px 0;
+  margin: 0.5em 0;
   overflow-x: auto;
   overflow-y: hidden;
+  font-size: var(--math-font-size-display);
 }
 
 /* CRITICAL: Large operators at natural Desmos-like size (2-2.5x) */
@@ -241,6 +251,7 @@ textarea::placeholder {
 /* Proper vertical alignment for inline math */
 .katex-html {
   white-space: nowrap;
+  vertical-align: -0.08em;
 }
 
 
@@ -262,7 +273,27 @@ textarea::placeholder {
 
 /* Math expression container */
 .math-expression {
-  font-size: 16px;
+  font-size: 1rem;
+  line-height: var(--math-row-line-height);
+}
+
+/* Keep Greek glyphs optically aligned with surrounding symbols. */
+.katex .mord.mathnormal,
+.katex .mord .mord.mathnormal {
+  font-size: var(--math-font-size-symbol);
+}
+
+/* Matrix typography + spacing should follow the surrounding math context. */
+.katex .array,
+.katex .array td,
+.katex .array colgroup {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.2;
+}
+
+.katex .array {
+  margin: 0;
 }
 
 /* Dark theme KaTeX */
@@ -284,7 +315,7 @@ textarea::placeholder {
 
 /* Ensure math templates flow inline and don't constrain operator size */
 .math-template .katex {
-  font-size: 1.1em;
+  font-size: var(--math-font-size-inline);
 }
 
 /* Large operators in templates get full Desmos sizing */

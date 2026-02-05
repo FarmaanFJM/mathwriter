@@ -2192,12 +2192,12 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
 /* CRITICAL: Display layer is read-only HTML */
 .editor-display {
   flex: 1;
-  padding: 32px 48px;
-  padding-left: 72px;
+  padding: 2rem 3rem;
+  padding-left: 4.75rem;
   overflow-y: auto;
   font-family: 'Georgia', 'Times New Roman', serif;
-  font-size: 16px;
-  line-height: 1.8;
+  font-size: 1rem;
+  line-height: var(--math-row-line-height);
   color: var(--color-text-primary);
   outline: none;
   user-select: none;
@@ -2208,22 +2208,26 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
 /* Container lines */
 .container-line {
   display: block;
-  min-height: auto;
+  min-height: 1.75em;
   position: relative;
   word-wrap: break-word;
-  margin: 4px 0;
-  padding: 4px 0;
+  margin: 0;
+  padding: 0.125em 0;
+  line-height: var(--math-row-line-height);
 }
 
 .container-line::before {
   content: attr(data-line-number);
   position: absolute;
-  left: -48px;
-  font-size: 12px;
+  left: -3rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.25rem;
+  font-size: var(--math-font-size-line-number);
+  line-height: 1;
   color: var(--color-text-tertiary);
   text-align: right;
-  width: 32px;
-  top: 4px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Text characters */
@@ -2240,7 +2244,7 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
   display: inline-flex;
   align-items: baseline;
   vertical-align: baseline;
-  margin: 0 1px;
+  margin: 0 0.06em;
 }
 
 .symbol-render {
@@ -2248,24 +2252,24 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
 }
 
 .symbol-render :deep(.katex) {
-  font-size: 1.05em;
+  font-size: var(--math-font-size-symbol);
 }
 
 .empty-line-placeholder {
   display: inline-block;
   width: 0;
-  height: 1.8em;
+  height: 1.75em;
   vertical-align: baseline;
 }
 
 /* CRITICAL: Matrix is INLINE - flows with text */
 .matrix-inline {
   display: inline-flex;
-  align-items: center;
-  gap: 2px;
+  align-items: baseline;
+  gap: var(--math-matrix-gap-inline);
   vertical-align: baseline;
-  margin: 0 6px;
-  padding: 0;
+  margin: 0 var(--math-matrix-padding-inline);
+  padding: 0.06em 0;
   background: transparent;
   border: none;
   border-radius: 0;
@@ -2277,7 +2281,7 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
 }
 
 .matrix-bracket {
-  width: 14px;
+  width: 0.9em;
   flex-shrink: 0;
   color: var(--color-text-secondary);
   display: flex;
@@ -2300,11 +2304,11 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
 }
 
 .matrix-cell-textbook {
-  min-width: 28px;
-  min-height: 20px;
-  padding: 1px 2px;
+  min-width: 1.75em;
+  min-height: 1.25em;
+  padding: 0.06em 0.12em;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 1em;
   text-align: center;
   background: transparent;
   border: none;
