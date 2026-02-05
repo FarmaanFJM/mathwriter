@@ -217,7 +217,7 @@ textarea::placeholder {
 
 /* CRITICAL: Large operators at natural Desmos-like size (2-2.5x) */
 .katex .op-symbol.large-op {
-  font-size: 2.05em !important;
+  font-size: 1.72em !important;
 }
 
 .katex .op-symbol.small-op {
@@ -268,7 +268,7 @@ textarea::placeholder {
 
 .katex .array {
   display: inline-table;
-  vertical-align: baseline;
+  vertical-align: middle;
 }
 
 /* Math expression container */
@@ -289,11 +289,11 @@ textarea::placeholder {
 .katex .array colgroup {
   font-family: inherit;
   font-size: inherit;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .katex .array td {
-  vertical-align: baseline;
+  vertical-align: middle;
 }
 
 .katex .array {
@@ -324,7 +324,7 @@ textarea::placeholder {
 
 /* Large operators in templates get full Desmos sizing */
 .math-template.is-large-operator .katex .op-symbol.large-op {
-  font-size: 2.2em !important;
+  font-size: 1.85em !important;
 }
 
 .math-template.is-large-operator .katex .op-limits > .vlist-t > .vlist-r > .vlist {

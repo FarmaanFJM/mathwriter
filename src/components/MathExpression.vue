@@ -169,7 +169,7 @@ function handleEditorKeydown(event: KeyboardEvent) {
 }
 
 .math-render :deep(.katex .array td) {
-  vertical-align: baseline;
+  vertical-align: middle;
 }
 
 .math-render :deep(.katex .array) {

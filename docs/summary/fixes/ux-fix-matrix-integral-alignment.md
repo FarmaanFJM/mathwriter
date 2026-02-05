@@ -1,45 +1,60 @@
 # UX Fix: Matrix Symbol Alignment and Integral Symbol Sizing
 
-## Issues observed
+## What was still wrong
 
-1. **Matrix symbol baseline drift**: Matrix cell content appeared lower than expected versus surrounding delimiters. This came from mixed vertical alignment behavior between KaTeX array containers/cells and component-level inherited typography overrides.
-2. **Integral symbol oversized in display math**: Large-operator scaling exceeded the desired visual hierarchy for display equations, causing integrals to dominate nearby limits and expression terms.
+After the previous patch, two regressions remained visible:
 
-## CSS fixes applied
+1. **Matrix glyphs still appeared dropped inside brackets**
+   - Matrix cells were pinned to the **baseline** (`vertical-align: baseline`), which visually anchors text low within table cells.
+   - In KaTeX matrices, this made symbols appear lower than bracket centers.
 
-### 1) Matrix alignment and bracket-to-content consistency
+2. **Integral operator still looked oversized**
+   - The large-operator scaling values were still too aggressive for this UI context.
+   - At larger editor text sizes (e.g., 32px), the integral remained visually dominant over limits and adjacent terms.
 
-- **File:** `src/style.css`
-  - Selector: `.katex .array`
-    - Changed `vertical-align` from `middle` to `baseline` to keep matrix blocks aligned to surrounding math baseline and delimiters.
-  - Selector: `.katex .array td`
-    - Added `vertical-align: baseline` so cell content aligns consistently row-to-row without downward drift.
+## CSS rules updated
 
-- **File:** `src/components/MathExpression.vue`
-  - Selector block change:
-    - Removed broad `:deep(.katex *)` typography inheritance override so KaTeX internal sizing/alignment logic is preserved.
-    - Kept inheritance for `.katex`, `.katex .array`, and `.katex .array td` only.
-  - Selector: `.math-render :deep(.katex .array td)`
-    - Added `vertical-align: baseline` to reinforce matrix cell baseline consistency at component scope.
+### `src/style.css`
 
-### 2) Integral symbol sizing balance
+- `.katex .op-symbol.large-op`
+  - `font-size: 2.05em` → `1.72em`
+- `.math-template.is-large-operator .katex .op-symbol.large-op`
+  - `font-size: 2.2em` → `1.85em`
 
-- **File:** `src/style.css`
-  - Selector: `.katex .op-symbol.large-op`
-    - Adjusted `font-size` from `2.4em` to `2.05em` to restore proportional size for display integrals.
-  - Selector: `.math-template.is-large-operator .katex .op-symbol.large-op`
-    - Adjusted `font-size` from `2.6em` to `2.2em` to keep template-rendered large operators visually balanced and consistent with global scale.
+These reductions bring integral size back into proportion with limits and surrounding expression content.
 
-## Token/variable impact
+- `.katex .array`
+  - `vertical-align: baseline` → `middle`
 
-- No new tokens were introduced.
-- Existing typography token set was preserved.
-- No CSS variables were added/removed; fixes were confined to selector-level property adjustments.
+This restores KaTeX-appropriate matrix block alignment relative to delimiters.
 
-## Verification steps
+- `.katex .array, .katex .array td, .katex .array colgroup`
+  - `line-height: 1.2` → `1`
 
-1. Render inline matrices (e.g., `\begin{bmatrix}a&b\\c&d\end{bmatrix}`) and confirm symbols sit on a consistent baseline with delimiters enclosing content correctly.
-2. Render display matrices (2×2 and 3×3) and confirm row/cell positioning remains compact and vertically coherent.
-3. Render display integral with limits (e.g., `\int_a^b f(x)\,dx`) and verify operator scale is proportional to bounds/adjacent terms.
-4. Repeat checks at common zoom levels (90%, 100%, 110%, 125%) to ensure baseline and proportional sizing remain stable.
-5. Validate in Chromium-based browser and one secondary engine where available to check cross-browser consistency.
+This removes extra vertical leading that made matrix entries look optically low.
+
+- `.katex .array td`
+  - `vertical-align: baseline` → `middle`
+
+This centers matrix symbols correctly inside each row/cell and improves bracket-to-content alignment.
+
+### `src/components/MathExpression.vue`
+
+- `.math-render :deep(.katex .array td)`
+  - `vertical-align: baseline` → `middle`
+
+Component-scoped override now matches global KaTeX matrix alignment behavior.
+
+## CSS token impact
+
+- No new variables introduced.
+- Existing typography token set preserved.
+- No matrix spacing tokens removed.
+
+## Visual verification checklist
+
+1. Render inline matrix `\begin{bmatrix}a&d\\a&s\end{bmatrix}` and verify symbols are vertically centered between brackets.
+2. Render larger matrices (2×2 and 3×3) and confirm rows do not drift downward.
+3. Render `\int_a^b f(x)\,dx` in display mode and confirm integral size is balanced against bounds.
+4. Validate at 90%, 100%, 110%, and 125% zoom for stable alignment.
+5. Re-check in Chromium and one additional browser engine where available.
