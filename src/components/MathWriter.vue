@@ -98,6 +98,7 @@
         :style="editorDisplayStyle"
         @click="handleDisplayClick"
         @mouseup="stopSelection"
+        @mousemove="handleSelectionMouseMove"
       >
         <!-- Render document as pure HTML -->
         <div
@@ -123,8 +124,8 @@
                 :class="{ 'is-selected': isOffsetSelected(line.id, token.offset) }"
                 :style="getTextTokenStyle(line as TextLine, token)"
                 @mousedown.stop="startSelection(line.id, token.offset)"
-                @mouseenter.stop="updateSelection(line.id, token.offset + 1)"
-                @click.stop="setCursorAtOffset(line.id, token.offset + 1)"
+                @mousemove.stop="updateSelection(line.id, token.offset + 1)"
+                @click.stop="handleTokenClick(line.id, token.offset + 1)"
               >{{ token.value }}</span>
 
               <!-- Symbol segment (rendered with KaTeX inline) -->
@@ -135,8 +136,8 @@
                 :style="getSegmentStyle(token.segment)"
                 :data-latex="(token.segment as SymbolSpan).latex"
                 @mousedown.stop="startSelection(line.id, token.offset)"
-                @mouseenter.stop="updateSelection(line.id, token.offset + 1)"
-                @click.stop="setCursorAtOffset(line.id, token.offset + 1)"
+                @mousemove.stop="updateSelection(line.id, token.offset + 1)"
+                @click.stop="handleTokenClick(line.id, token.offset + 1)"
               >
                 <span class="symbol-render" :ref="(el) => registerSymbolRef(line.id, token.segmentIndex, el as HTMLElement)"></span>
               </span>
@@ -148,8 +149,8 @@
                 :class="{ 'is-selected': isOffsetSelected(line.id, token.offset) }"
                 :style="getSegmentStyle(token.segment)"
                 :active-slot-name="getActiveSlotName(line.id, (token.segment as MathTemplateSpan).id)"
-                @mousedown.stop="startSelection(line.id, token.offset)"
-                @mouseenter.stop="updateSelection(line.id, token.offset + 1)"
+                @mousedown.capture="startSelection(line.id, token.offset)"
+                @mousemove.capture="updateSelection(line.id, token.offset + 1)"
                 @focus-slot="(spanId, slotName) => focusMathTemplateSlot(line.id, spanId, slotName)"
               />
 
@@ -157,8 +158,8 @@
               <span v-else-if="token.type === 'matrix'" class="matrix-inline"
                 :class="{ 'is-selected': isOffsetSelected(line.id, token.offset) }"
                 :style="getSegmentStyle(token.segment)"
-                @mousedown.stop="startSelection(line.id, token.offset)"
-                @mouseenter.stop="updateSelection(line.id, token.offset + 1)">
+                @mousedown.capture="startSelection(line.id, token.offset)"
+                @mousemove.capture="updateSelection(line.id, token.offset + 1)">
                 <span class="matrix-bracket bracket-left" :style="{ height: bracketHeight(token.segment as MatrixSpan) }">
                   <svg viewBox="0 0 20 100" preserveAspectRatio="none">
                     <path d="M 15 0 L 5 0 L 5 100 L 15 100" fill="none" stroke="currentColor" stroke-width="2.5"/>
@@ -456,11 +457,18 @@ const selectedCommandIndex = ref(0)
 
 const fontSizes = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32]
 const isSelecting = ref(false)
+const hasSelectionDrag = ref(false)
+const suppressClickAfterSelection = ref(false)
 const selectionAnchor = ref<{ lineId: string, offset: number } | null>(null)
 
-const editorDisplayStyle = computed(() => ({
-  fontSize: `${editorStore.currentFontSize}px`
-}))
+const editorDisplayStyle = computed(() => ({}))
+
+const defaultRenderFormat: Required<TextFormat> = {
+  fontSize: 16,
+  bold: false,
+  italic: false,
+  underline: false
+}
 
 function resolveBaseFormat(): TextFormat {
   return {
@@ -472,9 +480,9 @@ function resolveBaseFormat(): TextFormat {
 }
 
 function toInlineStyle(format?: TextFormat) {
-  const merged: TextFormat = { ...resolveBaseFormat(), ...(format || {}) }
+  const merged: Required<TextFormat> = { ...defaultRenderFormat, ...(format || {}) }
   return {
-    fontSize: `${merged.fontSize ?? editorStore.currentFontSize}px`,
+    fontSize: `${merged.fontSize}px`,
     fontWeight: merged.bold ? '700' : '400',
     fontStyle: merged.italic ? 'italic' : 'normal',
     textDecoration: merged.underline ? 'underline' : 'none'
@@ -483,25 +491,33 @@ function toInlineStyle(format?: TextFormat) {
 
 function updateFontSize(event: Event) {
   const value = Number((event.target as HTMLSelectElement).value)
-  if (!Number.isNaN(value)) {
-    const patch = editorStore.setFontSize(value)
+  if (Number.isNaN(value)) return
+
+  const patch = editorStore.setFontSize(value)
+  if (editorStore.hasSelection) {
     applyFormattingPatch(patch)
   }
 }
 
 function toggleBold() {
   const patch = editorStore.toggleBold()
-  applyFormattingPatch(patch)
+  if (editorStore.hasSelection) {
+    applyFormattingPatch(patch)
+  }
 }
 
 function toggleItalic() {
   const patch = editorStore.toggleItalic()
-  applyFormattingPatch(patch)
+  if (editorStore.hasSelection) {
+    applyFormattingPatch(patch)
+  }
 }
 
 function toggleUnderline() {
   const patch = editorStore.toggleUnderline()
-  applyFormattingPatch(patch)
+  if (editorStore.hasSelection) {
+    applyFormattingPatch(patch)
+  }
 }
 
 // Symbol rendering refs
@@ -1835,6 +1851,11 @@ function focusMatrixCell(lineId: string, matrixId: string, row: number, col: num
 function handleDisplayClick(event: MouseEvent) {
   const target = event.target as HTMLElement
 
+  if (suppressClickAfterSelection.value) {
+    suppressClickAfterSelection.value = false
+    return
+  }
+
   const editorDisplay = window.document.querySelector('.editor-display') as HTMLElement | null
   if (!editorDisplay?.contains(target)) return
 
@@ -1870,6 +1891,7 @@ function handleDisplayClick(event: MouseEvent) {
       if (line && line.type === 'text') {
         setCursorAtOffset(lineId, getLineLength(line))
       } else {
+        editorStore.clearSelection()
         cursor.value = {
           zone: 'text',
           lineId: lineId,
@@ -1883,6 +1905,7 @@ function handleDisplayClick(event: MouseEvent) {
 
   if (document.value.length > 0) {
     const lastLine = document.value[document.value.length - 1]
+    editorStore.clearSelection()
     cursor.value = {
       zone: 'text',
       lineId: lastLine.id,
@@ -2127,6 +2150,8 @@ function getLineStyle(line: MatrixLine | MathExpressionLine) {
 
 function startSelection(lineId: string, offset: number) {
   isSelecting.value = true
+  hasSelectionDrag.value = false
+  suppressClickAfterSelection.value = false
   selectionAnchor.value = { lineId, offset }
   editorStore.setSelection({ lineId, start: offset, end: offset })
 }
@@ -2134,15 +2159,42 @@ function startSelection(lineId: string, offset: number) {
 function updateSelection(lineId: string, offset: number) {
   if (!isSelecting.value || !selectionAnchor.value) return
   if (selectionAnchor.value.lineId !== lineId) return
-  editorStore.setSelection({
-    lineId,
-    start: Math.min(selectionAnchor.value.offset, offset),
-    end: Math.max(selectionAnchor.value.offset, offset)
-  })
+
+  const start = Math.min(selectionAnchor.value.offset, offset)
+  const end = Math.max(selectionAnchor.value.offset, offset)
+  hasSelectionDrag.value = hasSelectionDrag.value || start !== end
+
+  editorStore.setSelection({ lineId, start, end })
+}
+
+function handleSelectionMouseMove(event: MouseEvent) {
+  if (!isSelecting.value || event.buttons !== 1) return
+  const target = event.target as HTMLElement | null
+  if (!target) return
+
+  const lineEl = target.closest('[data-line-id]') as HTMLElement | null
+  if (!lineEl) return
+  const lineId = lineEl.getAttribute('data-line-id')
+  if (!lineId || selectionAnchor.value?.lineId !== lineId) return
+
+  const line = notesStore.getLineById(lineId) as TextLine | null
+  if (!line || line.type !== 'text') return
+  updateSelection(lineId, getLineLength(line))
 }
 
 function stopSelection() {
+  if (hasSelectionDrag.value && editorStore.hasSelection) {
+    suppressClickAfterSelection.value = true
+  }
   isSelecting.value = false
+}
+
+function handleTokenClick(lineId: string, offset: number) {
+  if (suppressClickAfterSelection.value) {
+    suppressClickAfterSelection.value = false
+    return
+  }
+  setCursorAtOffset(lineId, offset)
 }
 
 function isOffsetSelected(lineId: string, offset: number): boolean {
