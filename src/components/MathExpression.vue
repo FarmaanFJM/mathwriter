@@ -26,10 +26,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, nextTick, watch, computed } from 'vue'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import type { MathExpressionLine } from '../types/editor'
+import { sanitizeLatex } from '../utils/latexMapping'
 
 interface Props {
   line: MathExpressionLine
@@ -51,8 +52,10 @@ onMounted(() => {
   renderMath()
 })
 
+const sanitizedLatex = computed(() => sanitizeLatex(props.line.latex))
+
 watch(
-  () => [props.line.latex, props.line.displayMode],
+  () => [sanitizedLatex.value, props.line.displayMode],
   () => {
     renderMath()
   }
@@ -63,13 +66,13 @@ function renderMath() {
 
   try {
     mathContainer.value.innerHTML = ''
-    katex.render(props.line.latex, mathContainer.value, {
+    katex.render(sanitizedLatex.value, mathContainer.value, {
       displayMode: props.line.displayMode,
       throwOnError: false,
       trust: true
     })
   } catch {
-    mathContainer.value.textContent = props.line.latex
+    mathContainer.value.textContent = sanitizedLatex.value
   }
 }
 
@@ -83,17 +86,18 @@ function onExpressionClick() {
 
 function updateLatex(event: Event) {
   const latex = (event.target as HTMLInputElement).value
-  emit('update', latex)
+  emit('update', sanitizeLatex(latex))
+  const sanitized = sanitizeLatex(latex)
 
   if (mathContainer.value) {
     try {
       mathContainer.value.innerHTML = ''
-      katex.render(latex, mathContainer.value, {
+      katex.render(sanitized, mathContainer.value, {
         displayMode: props.line.displayMode,
         throwOnError: false
       })
     } catch {
-      mathContainer.value.textContent = latex
+      mathContainer.value.textContent = sanitized
     }
   }
 }
@@ -114,6 +118,7 @@ function handleEditorKeydown(event: KeyboardEvent) {
 <style scoped>
 .math-expression {
   display: inline-block;
+  vertical-align: baseline;
   min-width: 0;
   padding: 0;
   margin: 0;
@@ -143,13 +148,28 @@ function handleEditorKeydown(event: KeyboardEvent) {
 .math-expression.display-mode {
   display: block;
   margin: 8px 0;
+  vertical-align: initial;
 }
 
 .math-render {
   font-size: 16px;
-  line-height: 1.7;
+  line-height: 1.2;
   min-height: 24px;
   display: inline-block;
+  vertical-align: baseline;
+}
+
+.math-render :deep(.katex) {
+  vertical-align: baseline;
+}
+
+.math-render :deep(.katex .mfrac) {
+  vertical-align: middle;
+}
+
+.math-render :deep(.katex .array) {
+  display: inline-table;
+  vertical-align: middle;
 }
 
 .math-editor {

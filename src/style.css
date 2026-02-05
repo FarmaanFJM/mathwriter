@@ -243,6 +243,23 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
+
+.katex,
+.katex .base,
+.katex-html {
+  vertical-align: baseline;
+  line-height: 1.2;
+}
+
+.katex .mfrac {
+  vertical-align: middle;
+}
+
+.katex .array {
+  display: inline-table;
+  vertical-align: middle;
+}
+
 /* Math expression container */
 .math-expression {
   font-size: 16px;
