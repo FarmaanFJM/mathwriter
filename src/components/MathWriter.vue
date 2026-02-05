@@ -29,6 +29,44 @@
     <!-- CENTER: Editor Container -->
     <div class="editor-container">
       <div class="editor-header">
+        <div class="editor-toolbar" role="toolbar" aria-label="Text formatting">
+          <label class="toolbar-label" for="font-size">Size</label>
+          <select id="font-size" class="toolbar-select" :value="editorStore.currentFontSize" @change="updateFontSize">
+            <option v-for="size in fontSizes" :key="size" :value="size">{{ size }}px</option>
+          </select>
+
+          <button
+            type="button"
+            class="toolbar-btn"
+            :class="{ active: editorStore.isBold }"
+            @click="editorStore.toggleBold()"
+            aria-label="Toggle bold"
+            title="Bold"
+          >
+            <strong>B</strong>
+          </button>
+          <button
+            type="button"
+            class="toolbar-btn"
+            :class="{ active: editorStore.isItalic }"
+            @click="editorStore.toggleItalic()"
+            aria-label="Toggle italic"
+            title="Italic"
+          >
+            <em>I</em>
+          </button>
+          <button
+            type="button"
+            class="toolbar-btn"
+            :class="{ active: editorStore.isUnderline }"
+            @click="editorStore.toggleUnderline()"
+            aria-label="Toggle underline"
+            title="Underline"
+          >
+            <span class="underline-icon">U</span>
+          </button>
+        </div>
+
         <input
           v-if="notesStore.activeNote"
           v-model="notesStore.activeNote.title"
@@ -57,6 +95,7 @@
       <!-- DISPLAY LAYER: Read-only rendered content -->
       <div
         class="editor-display"
+        :style="editorDisplayStyle"
         @click="handleDisplayClick"
       >
         <!-- Render document as pure HTML -->
@@ -396,6 +435,22 @@ const commandQuery = ref('')
 const showCommandPalette = ref(false)
 const selectedCommandIndex = ref(0)
 
+const fontSizes = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32]
+
+const editorDisplayStyle = computed(() => ({
+  fontSize: `${editorStore.currentFontSize}px`,
+  fontWeight: editorStore.isBold ? '700' : '400',
+  fontStyle: editorStore.isItalic ? 'italic' : 'normal',
+  textDecoration: editorStore.isUnderline ? 'underline' : 'none'
+}))
+
+function updateFontSize(event: Event) {
+  const value = Number((event.target as HTMLSelectElement).value)
+  if (!Number.isNaN(value)) {
+    editorStore.setFontSize(value)
+  }
+}
+
 // Symbol rendering refs
 const symbolRefs = ref<Map<string, HTMLElement>>(new Map())
 const matrixCellRefs = ref<Map<string, HTMLElement>>(new Map())
@@ -489,6 +544,7 @@ watch(document, () => {
 // Initialize
 onMounted(() => {
   editorStore.initTheme()
+  editorStore.initFormatting()
   notesStore.init()
   if (document.value.length > 0) {
     cursor.value = {
@@ -745,10 +801,11 @@ function handleKeydown(event: KeyboardEvent) {
 
   if (event.key === 'ArrowLeft') {
     if (cursor.value.zone === 'mathTemplate') {
+      const currentCursor = cursor.value
       const data = getTemplateByCursor()
       if (data) {
-        if (cursor.value.slotOffset > 0) {
-          cursor.value = { ...cursor.value, slotOffset: cursor.value.slotOffset - 1 }
+        if (currentCursor.slotOffset > 0) {
+          cursor.value = { ...currentCursor, slotOffset: currentCursor.slotOffset - 1 }
         } else {
           const template = mathTemplates[data.span.templateId]
           if (!template) {
@@ -756,14 +813,14 @@ function handleKeydown(event: KeyboardEvent) {
             event.preventDefault()
             return
           }
-          const slotIndex = template.slots.findIndex(s => s.name === cursor.value.slotName)
+          const slotIndex = template.slots.findIndex(s => s.name === currentCursor.slotName)
           if (slotIndex > 0) {
             const prevSlot = template.slots[slotIndex - 1]
             const prevVal = data.span.slotValues[prevSlot.name] || ''
             cursor.value = {
               zone: 'mathTemplate',
-              lineId: cursor.value.lineId,
-              templateSpanId: cursor.value.templateSpanId,
+              lineId: currentCursor.lineId,
+              templateSpanId: currentCursor.templateSpanId,
               slotName: prevSlot.name,
               slotOffset: prevVal.length
             }
@@ -782,6 +839,7 @@ function handleKeydown(event: KeyboardEvent) {
 
   if (event.key === 'ArrowRight') {
     if (cursor.value.zone === 'mathTemplate') {
+      const currentCursor = cursor.value
       const data = getTemplateByCursor()
       if (data) {
         const template = mathTemplates[data.span.templateId]
@@ -790,17 +848,17 @@ function handleKeydown(event: KeyboardEvent) {
           event.preventDefault()
           return
         }
-        const val = data.span.slotValues[cursor.value.slotName] || ''
-        if (cursor.value.slotOffset < val.length) {
-          cursor.value = { ...cursor.value, slotOffset: cursor.value.slotOffset + 1 }
+        const val = data.span.slotValues[currentCursor.slotName] || ''
+        if (currentCursor.slotOffset < val.length) {
+          cursor.value = { ...currentCursor, slotOffset: currentCursor.slotOffset + 1 }
         } else {
-          const slotIndex = template.slots.findIndex(s => s.name === cursor.value.slotName)
+          const slotIndex = template.slots.findIndex(s => s.name === currentCursor.slotName)
           if (slotIndex < template.slots.length - 1) {
             const nextSlot = template.slots[slotIndex + 1]
             cursor.value = {
               zone: 'mathTemplate',
-              lineId: cursor.value.lineId,
-              templateSpanId: cursor.value.templateSpanId,
+              lineId: currentCursor.lineId,
+              templateSpanId: currentCursor.templateSpanId,
               slotName: nextSlot.name,
               slotOffset: 0
             }
@@ -2068,6 +2126,58 @@ function getTemplateOffsets(line: TextLine, templateSpanId: string): { start: nu
   padding: var(--spacing-md) var(--spacing-xl);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.toolbar-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.toolbar-select {
+  min-width: 76px;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+}
+
+.toolbar-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toolbar-btn:hover {
+  border-color: var(--color-accent);
+}
+
+.toolbar-btn.active {
+  background: var(--color-accent-light);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.underline-icon {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
 }
 
 .note-title-input {
